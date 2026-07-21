@@ -1,0 +1,750 @@
+'use strict';
+/* ================================================================
+   머니북 가계부 — 모든 데이터는 이 기기(localStorage)에만 저장됩니다.
+   서버로 전송되는 것은 오직 'AI 피드백'을 켰을 때 Claude API 호출뿐입니다.
+   ================================================================ */
+
+/* ---------- 저장소 ---------- */
+const KEY = 'moneybook.v1';
+const DEFAULTS = {
+  tx: [],            // {id, type:'expense'|'income', amount, category, date:'YYYY-MM-DD', memo}
+  recurring: [],     // {id, type, amount, category, memo, day, from:'YYYY-MM', last:'YYYY-MM'}
+  budgets: {},       // { category: 월예산금액 }  (매월 반복 적용)
+  goals: { monthlySpend: 0, annualSaving: 0 },
+  categories: {
+    expense: [
+      { name: '식비', emoji: '🍚' }, { name: '카페/간식', emoji: '☕' },
+      { name: '교통', emoji: '🚌' }, { name: '주거/통신', emoji: '🏠' },
+      { name: '생활', emoji: '🧺' }, { name: '쇼핑', emoji: '🛍️' },
+      { name: '의료/건강', emoji: '💊' }, { name: '문화/여가', emoji: '🎬' },
+      { name: '경조사', emoji: '🎁' }, { name: '기타', emoji: '💸' }
+    ],
+    income: [
+      { name: '월급', emoji: '💼' }, { name: '용돈', emoji: '💰' },
+      { name: '부수입', emoji: '📈' }, { name: '기타수입', emoji: '✨' }
+    ]
+  },
+  settings: { apiKey: '', model: 'claude-opus-4-8' }
+};
+
+let DB;
+function load() {
+  try { DB = { ...structuredClone(DEFAULTS), ...JSON.parse(localStorage.getItem(KEY) || '{}') }; }
+  catch { DB = structuredClone(DEFAULTS); }
+  // 중첩 기본값 보정
+  DB.goals = { ...DEFAULTS.goals, ...(DB.goals || {}) };
+  DB.settings = { ...DEFAULTS.settings, ...(DB.settings || {}) };
+  DB.categories = DB.categories || structuredClone(DEFAULTS.categories);
+}
+function save() { localStorage.setItem(KEY, JSON.stringify(DB)); }
+
+/* ---------- 유틸 ---------- */
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const won = (n) => (n < 0 ? '-' : '') + '₩' + Math.abs(Math.round(n)).toLocaleString('ko-KR');
+const wonShort = (n) => {
+  const a = Math.abs(n);
+  if (a >= 100000000) return (n / 100000000).toFixed(1).replace(/\.0$/, '') + '억';
+  if (a >= 10000) return Math.round(n / 10000).toLocaleString('ko-KR') + '만';
+  return won(n);
+};
+const ym = (d) => d.slice(0, 7);                     // 'YYYY-MM'
+const todayStr = () => new Date().toISOString().slice(0, 10);
+const monthLabel = (yms) => { const [y, m] = yms.split('-'); return `${y}년 ${+m}월`; };
+const catInfo = (type, name) => (DB.categories[type] || []).find((c) => c.name === name) || { name, emoji: type === 'income' ? '✨' : '💸' };
+const shiftMonth = (yms, delta) => {
+  const [y, m] = yms.split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+};
+
+// 색상 팔레트 (통계 차트)
+const PALETTE = ['#16a085', '#2f80ed', '#eb5757', '#f2994a', '#9b51e0', '#2d9cdb', '#27ae60', '#e67e22', '#eb5794', '#56ccf2'];
+
+/* ---------- 앱 상태 ---------- */
+let curMonth = ym(todayStr());     // 현재 보고 있는 달
+let curTab = 'home';
+
+/* ---------- 반복 거래 자동 생성 ---------- */
+function runRecurring() {
+  const nowYM = ym(todayStr());
+  let added = 0;
+  for (const r of DB.recurring) {
+    // r.from 부터 이번 달까지, 아직 생성 안 된 달들을 채운다
+    let m = r.last ? shiftMonth(r.last, 1) : (r.from || nowYM);
+    while (m <= nowYM) {
+      const [y, mm] = m.split('-').map(Number);
+      const lastDay = new Date(y, mm, 0).getDate();
+      const day = Math.min(r.day || 1, lastDay);
+      const date = `${m}-${String(day).padStart(2, '0')}`;
+      DB.tx.push({ id: uid(), type: r.type, amount: r.amount, category: r.category, date, memo: (r.memo || '') + ' (반복)', recurringId: r.id });
+      r.last = m; added++;
+      m = shiftMonth(m, 1);
+    }
+  }
+  if (added) save();
+  return added;
+}
+
+/* ---------- 집계 ---------- */
+function txOfMonth(yms) { return DB.tx.filter((t) => ym(t.date) === yms); }
+function sum(list, type) { return list.filter((t) => t.type === type).reduce((s, t) => s + t.amount, 0); }
+function catTotals(yms, type) {
+  const map = {};
+  for (const t of txOfMonth(yms)) if (t.type === type) map[t.category] = (map[t.category] || 0) + t.amount;
+  return Object.entries(map).sort((a, b) => b[1] - a[1]);
+}
+function yearNet(year) {
+  return DB.tx.filter((t) => t.date.slice(0, 4) === String(year))
+    .reduce((s, t) => s + (t.type === 'income' ? t.amount : -t.amount), 0);
+}
+
+/* ================================================================
+   렌더링
+   ================================================================ */
+const view = document.getElementById('view');
+
+function render() {
+  if (curTab === 'home') renderHome();
+  else if (curTab === 'list') renderList();
+  else if (curTab === 'stats') renderStats();
+  else if (curTab === 'more') renderMore();
+  document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === curTab));
+  window.scrollTo(0, 0);
+}
+
+function monthNavHTML() {
+  return `<div class="month-nav">
+    <button data-mn="-1">‹</button>
+    <span class="label">${monthLabel(curMonth)}</span>
+    <button data-mn="1">›</button>
+  </div>`;
+}
+
+/* ---------- 홈 ---------- */
+function renderHome() {
+  const list = txOfMonth(curMonth);
+  const income = sum(list, 'income');
+  const expense = sum(list, 'expense');
+  const balance = income - expense;
+
+  const target = DB.goals.monthlySpend;
+  const year = curMonth.slice(0, 4);
+  const saved = yearNet(year);
+  const savingGoal = DB.goals.annualSaving;
+
+  let goalsHTML = '';
+  if (target > 0) {
+    const pct = Math.min(100, (expense / target) * 100);
+    const cls = expense > target ? 'over' : (pct > 85 ? 'warn' : '');
+    goalsHTML += `<div class="goal">
+      <div class="top"><span class="name">이번 달 지출 목표</span>
+        <span class="val">${won(expense)} / ${won(target)}</span></div>
+      <div class="bar ${cls}"><span style="width:${pct}%"></span></div>
+      <div class="hint">${expense > target ? `목표보다 ${won(expense - target)} 초과했어요` : `${won(target - expense)} 남았어요`}</div>
+    </div>`;
+  }
+  if (savingGoal > 0) {
+    const pct = Math.max(0, Math.min(100, (saved / savingGoal) * 100));
+    goalsHTML += `<div class="goal">
+      <div class="top"><span class="name">${year}년 저축 목표</span>
+        <span class="val">${won(saved)} / ${won(savingGoal)}</span></div>
+      <div class="bar ${saved < 0 ? 'over' : ''}"><span style="width:${pct}%"></span></div>
+      <div class="hint">${saved >= savingGoal ? '목표 달성! 🎉' : saved < 0 ? '올해 지출이 수입보다 많아요' : `목표까지 ${won(savingGoal - saved)}`}</div>
+    </div>`;
+  }
+
+  const recent = [...list].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 5);
+
+  view.innerHTML = `
+    <div class="page-head"><h1>머니북</h1>${monthNavHTML()}</div>
+
+    <div class="card summary">
+      <h2>이번 달 잔액</h2>
+      <div class="balance">${won(balance)}</div>
+      <div class="row2">
+        <div><div class="k">수입</div><div class="v">${wonShort(income)}</div></div>
+        <div><div class="k">지출</div><div class="v">${wonShort(expense)}</div></div>
+      </div>
+    </div>
+
+    ${goalsHTML ? `<div class="card">${goalsHTML}</div>` : ''}
+
+    <div class="card">
+      <button class="btn primary" id="ai-btn">🤖 이번 달 AI 소비 피드백 받기</button>
+      <div id="ai-out"></div>
+    </div>
+
+    <div class="card">
+      <h2>최근 내역</h2>
+      ${recent.length ? recent.map(txRowHTML).join('') :
+        `<div class="empty"><div class="big">📭</div>아직 기록이 없어요.<br>아래 <b>＋</b> 버튼으로 추가해보세요.</div>`}
+    </div>
+  `;
+
+  view.querySelectorAll('[data-mn]').forEach((b) => b.onclick = () => { curMonth = shiftMonth(curMonth, +b.dataset.mn); render(); });
+  view.querySelectorAll('.tx').forEach((el) => el.onclick = () => openEditor(el.dataset.id));
+  document.getElementById('ai-btn').onclick = runAIFeedback;
+}
+
+function txRowHTML(t) {
+  const c = catInfo(t.type, t.category);
+  const sign = t.type === 'income' ? '+' : '-';
+  return `<div class="tx" data-id="${t.id}">
+    <div class="emoji">${c.emoji}</div>
+    <div class="mid">
+      <div class="cat">${esc(t.category)}</div>
+      ${t.memo ? `<div class="memo">${esc(t.memo)}</div>` : ''}
+    </div>
+    <div class="amt ${t.type}">${sign}${won(t.amount)}</div>
+  </div>`;
+}
+
+/* ---------- 내역 ---------- */
+function renderList() {
+  const list = [...txOfMonth(curMonth)].sort((a, b) => (a.date < b.date ? 1 : (a.date > b.date ? -1 : 0)));
+  const income = sum(list, 'income'), expense = sum(list, 'expense');
+
+  let body = '';
+  if (!list.length) {
+    body = `<div class="empty"><div class="big">📭</div>이 달의 기록이 없어요.</div>`;
+  } else {
+    let lastDate = '';
+    for (const t of list) {
+      if (t.date !== lastDate) {
+        lastDate = t.date;
+        const d = new Date(t.date + 'T00:00');
+        const wd = ['일','월','화','수','목','금','토'][d.getDay()];
+        const dayList = list.filter((x) => x.date === t.date);
+        const dExp = sum(dayList, 'expense');
+        body += `<div class="tx-group-date">${+t.date.slice(5,7)}월 ${+t.date.slice(8,10)}일 (${wd}) · 지출 ${won(dExp)}</div>`;
+      }
+      body += txRowHTML(t);
+    }
+  }
+
+  view.innerHTML = `
+    <div class="page-head"><h1>내역</h1>${monthNavHTML()}</div>
+    <div class="card summary">
+      <div class="row2" style="margin-top:0">
+        <div><div class="k">수입</div><div class="v">${wonShort(income)}</div></div>
+        <div><div class="k">지출</div><div class="v">${wonShort(expense)}</div></div>
+        <div><div class="k">합계</div><div class="v">${wonShort(income - expense)}</div></div>
+      </div>
+    </div>
+    ${body}
+  `;
+  view.querySelectorAll('[data-mn]').forEach((b) => b.onclick = () => { curMonth = shiftMonth(curMonth, +b.dataset.mn); render(); });
+  view.querySelectorAll('.tx').forEach((el) => el.onclick = () => openEditor(el.dataset.id));
+}
+
+/* ---------- 통계 ---------- */
+function renderStats() {
+  const totals = catTotals(curMonth, 'expense');
+  const total = totals.reduce((s, [, v]) => s + v, 0);
+
+  let donut = '';
+  if (total > 0) {
+    let acc = 0;
+    const segs = totals.map(([name, v], i) => {
+      const frac = v / total;
+      const seg = arc(75, 75, 60, acc, acc + frac, PALETTE[i % PALETTE.length]);
+      acc += frac; return seg;
+    }).join('');
+    donut = `<div class="donut-wrap">
+      <svg class="donut" viewBox="0 0 150 150">
+        ${segs}
+        <circle cx="75" cy="75" r="42" fill="var(--card)"/>
+        <text class="donut-center" x="75" y="70" text-anchor="middle">지출 합계</text>
+        <text class="donut-center-v" x="75" y="88" text-anchor="middle">${wonShort(total)}</text>
+      </svg>
+      <div class="legend">
+        ${totals.slice(0, 6).map(([name, v], i) => `<div class="legend-row">
+          <span class="dot" style="background:${PALETTE[i % PALETTE.length]}"></span>
+          <span>${catInfo('expense', name).emoji} ${esc(name)}</span>
+          <span class="pct">${Math.round(v / total * 100)}%</span>
+        </div>`).join('')}
+      </div>
+    </div>`;
+  } else {
+    donut = `<div class="empty"><div class="big">📊</div>이 달의 지출 기록이 없어요.</div>`;
+  }
+
+  // 예산 대비 실제
+  let budgetHTML = '';
+  const budgeted = Object.entries(DB.budgets).filter(([, v]) => v > 0);
+  if (budgeted.length) {
+    budgetHTML = `<div class="card"><h2>카테고리 예산</h2>` +
+      budgeted.map(([name, bud]) => {
+        const spent = (totals.find(([n]) => n === name) || [null, 0])[1];
+        const pct = Math.min(100, spent / bud * 100);
+        const cls = spent > bud ? 'over' : (pct > 85 ? 'warn' : '');
+        return `<div class="goal">
+          <div class="top"><span class="name">${catInfo('expense', name).emoji} ${esc(name)}</span>
+            <span class="val">${won(spent)} / ${won(bud)}</span></div>
+          <div class="bar ${cls}"><span style="width:${pct}%"></span></div>
+        </div>`;
+      }).join('') + `</div>`;
+  }
+
+  // 카테고리별 상세 리스트
+  const detail = total > 0 ? `<div class="card"><h2>카테고리별 지출</h2>` +
+    totals.map(([name, v], i) => {
+      const pct = v / total * 100;
+      return `<div class="cat-line">
+        <span class="emoji">${catInfo('expense', name).emoji}</span>
+        <div class="grow">
+          <div class="top"><span>${esc(name)}</span><span>${won(v)}</span></div>
+          <div class="bar"><span style="width:${pct}%;background:${PALETTE[i % PALETTE.length]}"></span></div>
+        </div>
+      </div>`;
+    }).join('') + `</div>` : '';
+
+  view.innerHTML = `
+    <div class="page-head"><h1>통계</h1>${monthNavHTML()}</div>
+    <div class="card">${donut}</div>
+    ${budgetHTML}
+    ${detail}
+  `;
+  view.querySelectorAll('[data-mn]').forEach((b) => b.onclick = () => { curMonth = shiftMonth(curMonth, +b.dataset.mn); render(); });
+}
+
+// 도넛 조각 SVG path
+function arc(cx, cy, r, from, to, color) {
+  if (to - from >= 0.9999) { // 전체 원
+    return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="30"/>`;
+  }
+  const a0 = from * 2 * Math.PI - Math.PI / 2;
+  const a1 = to * 2 * Math.PI - Math.PI / 2;
+  const x0 = cx + r * Math.cos(a0), y0 = cy + r * Math.sin(a0);
+  const x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
+  const large = (to - from) > 0.5 ? 1 : 0;
+  return `<path d="M ${x0} ${y0} A ${r} ${r} 0 ${large} 1 ${x1} ${y1}" fill="none" stroke="${color}" stroke-width="30"/>`;
+}
+
+/* ---------- 더보기 ---------- */
+function renderMore() {
+  const rc = DB.recurring.length;
+  const bc = Object.values(DB.budgets).filter((v) => v > 0).length;
+  view.innerHTML = `
+    <div class="page-head"><h1>더보기</h1></div>
+    <div class="card">
+      <div class="list-item" data-go="goals"><span class="ic">🎯</span>
+        <div class="grow"><div>목표 설정</div><div class="sub">월 지출 목표 · 연간 저축 목표</div></div><span class="chev">›</span></div>
+      <div class="list-item" data-go="budgets"><span class="ic">📊</span>
+        <div class="grow"><div>카테고리 예산</div><div class="sub">${bc ? bc + '개 설정됨' : '미설정'}</div></div><span class="chev">›</span></div>
+      <div class="list-item" data-go="recurring"><span class="ic">🔁</span>
+        <div class="grow"><div>반복 지출 · 구독</div><div class="sub">${rc ? rc + '개 등록됨' : '월세, 구독료 등 자동 기록'}</div></div><span class="chev">›</span></div>
+      <div class="list-item" data-go="categories"><span class="ic">🏷️</span>
+        <div class="grow"><div>카테고리 관리</div></div><span class="chev">›</span></div>
+    </div>
+    <div class="card">
+      <div class="list-item" data-go="ai"><span class="ic">🤖</span>
+        <div class="grow"><div>AI 피드백 설정</div><div class="sub">${DB.settings.apiKey ? '연결됨 · ' + DB.settings.model : 'API 키 미설정'}</div></div><span class="chev">›</span></div>
+    </div>
+    <div class="card">
+      <div class="list-item" data-go="export"><span class="ic">📤</span><div class="grow"><div>데이터 백업 (내보내기)</div></div><span class="chev">›</span></div>
+      <div class="list-item" data-go="import"><span class="ic">📥</span><div class="grow"><div>데이터 복원 (가져오기)</div></div><span class="chev">›</span></div>
+      <div class="list-item" data-go="reset"><span class="ic">🗑️</span><div class="grow"><div style="color:var(--expense)">전체 데이터 삭제</div></div></div>
+    </div>
+    <div class="hint" style="text-align:center;padding:6px 20px 20px">
+      모든 데이터는 이 기기에만 저장됩니다.<br>앱 삭제 전 꼭 백업하세요.
+    </div>
+  `;
+  view.querySelectorAll('[data-go]').forEach((el) => el.onclick = () => moreAction(el.dataset.go));
+}
+
+function moreAction(what) {
+  if (what === 'goals') openGoals();
+  else if (what === 'budgets') openBudgets();
+  else if (what === 'recurring') openRecurringList();
+  else if (what === 'categories') openCategories();
+  else if (what === 'ai') openAISettings();
+  else if (what === 'export') exportData();
+  else if (what === 'import') importData();
+  else if (what === 'reset') resetData();
+}
+
+/* ================================================================
+   입력 시트 (바텀 시트)
+   ================================================================ */
+const sheetEl = document.getElementById('sheet');
+const backdrop = document.getElementById('backdrop');
+
+function openSheet(html) {
+  sheetEl.innerHTML = `<div class="grab"></div>` + html;
+  sheetEl.classList.remove('hidden', 'closing');
+  backdrop.classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+}
+function closeSheet() {
+  sheetEl.classList.add('closing');
+  backdrop.classList.add('hidden');
+  document.body.style.overflow = '';
+  setTimeout(() => sheetEl.classList.add('hidden'), 260);
+}
+backdrop.onclick = closeSheet;
+
+/* ---------- 거래 입력/편집 ---------- */
+function openEditor(id) {
+  const editing = id ? DB.tx.find((t) => t.id === id) : null;
+  const draft = editing
+    ? { ...editing }
+    : { type: 'expense', amount: '', category: '', date: todayStr(), memo: '' };
+
+  function paint() {
+    const cats = DB.categories[draft.type] || [];
+    if (!cats.find((c) => c.name === draft.category)) draft.category = cats[0]?.name || '';
+    openSheet(`
+      <h3>${editing ? '내역 수정' : '새 내역'}</h3>
+      <div class="seg" id="seg">
+        <button data-t="expense" class="${draft.type === 'expense' ? 'on expense' : ''}">지출</button>
+        <button data-t="income" class="${draft.type === 'income' ? 'on income' : ''}">수입</button>
+      </div>
+      <div class="field" style="margin-top:16px">
+        <label>금액</label>
+        <input class="amount-input" id="amt" type="number" inputmode="numeric" placeholder="0" value="${draft.amount || ''}">
+      </div>
+      <div class="field">
+        <label>분류</label>
+        <div class="chips" id="chips">
+          ${cats.map((c) => `<button class="chip ${c.name === draft.category ? 'on' : ''}" data-c="${esc(c.name)}">${c.emoji} ${esc(c.name)}</button>`).join('')}
+        </div>
+      </div>
+      <div class="row">
+        <div class="field"><label>날짜</label><input id="date" type="date" value="${draft.date}"></div>
+      </div>
+      <div class="field"><label>메모 (선택)</label><input id="memo" type="text" placeholder="예: 점심 김밥" value="${esc(draft.memo || '')}"></div>
+      <button class="btn primary" id="save-tx">${editing ? '저장' : '추가하기'}</button>
+      ${editing ? `<button class="btn danger" id="del-tx" style="margin-top:8px">삭제</button>` : ''}
+    `);
+
+    sheetEl.querySelectorAll('#seg button').forEach((b) => b.onclick = () => { syncDraft(); draft.type = b.dataset.t; paint(); });
+    sheetEl.querySelectorAll('#chips .chip').forEach((b) => b.onclick = () => {
+      sheetEl.querySelectorAll('#chips .chip').forEach((x) => x.classList.remove('on'));
+      b.classList.add('on'); draft.category = b.dataset.c;
+    });
+    sheetEl.querySelector('#save-tx').onclick = saveTx;
+    if (editing) sheetEl.querySelector('#del-tx').onclick = () => {
+      if (confirm('이 내역을 삭제할까요?')) { DB.tx = DB.tx.filter((t) => t.id !== id); save(); closeSheet(); render(); toast('삭제했어요'); }
+    };
+    setTimeout(() => { if (!editing) sheetEl.querySelector('#amt').focus(); }, 100);
+  }
+  function syncDraft() {
+    draft.amount = sheetEl.querySelector('#amt')?.value ?? draft.amount;
+    draft.date = sheetEl.querySelector('#date')?.value ?? draft.date;
+    draft.memo = sheetEl.querySelector('#memo')?.value ?? draft.memo;
+  }
+  function saveTx() {
+    syncDraft();
+    const amt = Math.round(Number(draft.amount));
+    if (!amt || amt <= 0) return toast('금액을 입력해주세요');
+    if (!draft.category) return toast('분류를 선택해주세요');
+    const rec = { type: draft.type, amount: amt, category: draft.category, date: draft.date, memo: draft.memo.trim() };
+    if (editing) Object.assign(editing, rec);
+    else DB.tx.push({ id: uid(), ...rec });
+    save(); closeSheet(); render(); toast(editing ? '수정했어요' : '추가했어요 ✓');
+  }
+  paint();
+}
+
+/* ---------- 목표 설정 ---------- */
+function openGoals() {
+  openSheet(`
+    <h3>🎯 목표 설정</h3>
+    <div class="field">
+      <label>이번 달 지출 목표 (한 달에 이만큼만 쓰기)</label>
+      <input id="g-spend" type="number" inputmode="numeric" placeholder="예: 1500000" value="${DB.goals.monthlySpend || ''}">
+    </div>
+    <div class="field">
+      <label>올해 저축 목표 (1년간 모으고 싶은 돈)</label>
+      <input id="g-save" type="number" inputmode="numeric" placeholder="예: 12000000" value="${DB.goals.annualSaving || ''}">
+      <div class="hint">저축 진행률 = 올해 (수입 − 지출) 합계로 자동 계산됩니다.</div>
+    </div>
+    <button class="btn primary" id="save-goals">저장</button>
+  `);
+  sheetEl.querySelector('#save-goals').onclick = () => {
+    DB.goals.monthlySpend = Math.max(0, Math.round(Number(sheetEl.querySelector('#g-spend').value) || 0));
+    DB.goals.annualSaving = Math.max(0, Math.round(Number(sheetEl.querySelector('#g-save').value) || 0));
+    save(); closeSheet(); render(); toast('목표를 저장했어요');
+  };
+}
+
+/* ---------- 카테고리 예산 ---------- */
+function openBudgets() {
+  const cats = DB.categories.expense;
+  openSheet(`
+    <h3>📊 카테고리 예산</h3>
+    <div class="hint" style="margin-bottom:14px">매월 반복 적용됩니다. 비워두면 예산 없음.</div>
+    ${cats.map((c) => `<div class="field">
+      <label>${c.emoji} ${esc(c.name)}</label>
+      <input class="bud" data-c="${esc(c.name)}" type="number" inputmode="numeric" placeholder="예산 없음" value="${DB.budgets[c.name] || ''}">
+    </div>`).join('')}
+    <button class="btn primary" id="save-bud">저장</button>
+  `);
+  sheetEl.querySelector('#save-bud').onclick = () => {
+    sheetEl.querySelectorAll('.bud').forEach((i) => {
+      const v = Math.max(0, Math.round(Number(i.value) || 0));
+      if (v > 0) DB.budgets[i.dataset.c] = v; else delete DB.budgets[i.dataset.c];
+    });
+    save(); closeSheet(); render(); toast('예산을 저장했어요');
+  };
+}
+
+/* ---------- 반복 지출/구독 ---------- */
+function openRecurringList() {
+  openSheet(`
+    <h3>🔁 반복 지출 · 구독</h3>
+    <div class="hint" style="margin-bottom:12px">월세, 구독료처럼 매달 자동으로 기록할 항목이에요.</div>
+    ${DB.recurring.length ? DB.recurring.map((r) => {
+      const c = catInfo(r.type, r.category);
+      return `<div class="tx" data-r="${r.id}">
+        <div class="emoji">${c.emoji}</div>
+        <div class="mid"><div class="cat">${esc(r.memo || r.category)}</div>
+          <div class="memo">매월 ${r.day}일 · ${esc(r.category)}</div></div>
+        <div class="amt">${won(r.amount)}</div>
+      </div>`;
+    }).join('') : `<div class="empty" style="padding:20px"><div class="big">🔁</div>등록된 항목이 없어요.</div>`}
+    <button class="btn primary" id="add-r" style="margin-top:12px">+ 새 반복 항목</button>
+  `);
+  sheetEl.querySelectorAll('[data-r]').forEach((el) => el.onclick = () => openRecurringEdit(el.dataset.r));
+  sheetEl.querySelector('#add-r').onclick = () => openRecurringEdit(null);
+}
+
+function openRecurringEdit(id) {
+  const editing = id ? DB.recurring.find((r) => r.id === id) : null;
+  const d = editing ? { ...editing } : { type: 'expense', amount: '', category: DB.categories.expense[3]?.name || '', day: 1, memo: '' };
+  function paint() {
+    const cats = DB.categories[d.type] || [];
+    if (!cats.find((c) => c.name === d.category)) d.category = cats[0]?.name || '';
+    openSheet(`
+      <h3>${editing ? '반복 항목 수정' : '새 반복 항목'}</h3>
+      <div class="seg" id="rseg">
+        <button data-t="expense" class="${d.type === 'expense' ? 'on expense' : ''}">지출</button>
+        <button data-t="income" class="${d.type === 'income' ? 'on income' : ''}">수입</button>
+      </div>
+      <div class="field" style="margin-top:16px"><label>이름/메모</label>
+        <input id="r-memo" type="text" placeholder="예: 넷플릭스, 월세" value="${esc(d.memo || '')}"></div>
+      <div class="field"><label>금액</label>
+        <input id="r-amt" type="number" inputmode="numeric" placeholder="0" value="${d.amount || ''}"></div>
+      <div class="field"><label>분류</label>
+        <div class="chips" id="r-chips">${cats.map((c) => `<button class="chip ${c.name === d.category ? 'on' : ''}" data-c="${esc(c.name)}">${c.emoji} ${esc(c.name)}</button>`).join('')}</div></div>
+      <div class="field"><label>매월 며칠</label>
+        <select id="r-day">${Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}" ${d.day == i + 1 ? 'selected' : ''}>${i + 1}일</option>`).join('')}</select></div>
+      <button class="btn primary" id="r-save">${editing ? '저장' : '추가'}</button>
+      ${editing ? `<button class="btn danger" id="r-del" style="margin-top:8px">삭제</button>` : ''}
+    `);
+    sheetEl.querySelectorAll('#rseg button').forEach((b) => b.onclick = () => { sync(); d.type = b.dataset.t; paint(); });
+    sheetEl.querySelectorAll('#r-chips .chip').forEach((b) => b.onclick = () => {
+      sheetEl.querySelectorAll('#r-chips .chip').forEach((x) => x.classList.remove('on')); b.classList.add('on'); d.category = b.dataset.c;
+    });
+    sheetEl.querySelector('#r-save').onclick = doSave;
+    if (editing) sheetEl.querySelector('#r-del').onclick = () => {
+      if (confirm('반복 항목을 삭제할까요? (이미 기록된 내역은 남습니다)')) {
+        DB.recurring = DB.recurring.filter((r) => r.id !== id); save(); closeSheet(); render(); toast('삭제했어요');
+      }
+    };
+  }
+  function sync() {
+    d.amount = sheetEl.querySelector('#r-amt')?.value ?? d.amount;
+    d.memo = sheetEl.querySelector('#r-memo')?.value ?? d.memo;
+    d.day = sheetEl.querySelector('#r-day')?.value ?? d.day;
+  }
+  function doSave() {
+    sync();
+    const amt = Math.round(Number(d.amount));
+    if (!amt || amt <= 0) return toast('금액을 입력해주세요');
+    const rec = { type: d.type, amount: amt, category: d.category, day: Number(d.day), memo: (d.memo || '').trim() };
+    if (editing) { Object.assign(editing, rec); }
+    else { DB.recurring.push({ id: uid(), from: ym(todayStr()), last: '', ...rec }); }
+    runRecurring(); save(); closeSheet(); render(); toast('저장했어요 ✓');
+  }
+  paint();
+}
+
+/* ---------- 카테고리 관리 ---------- */
+function openCategories() {
+  function paint(type = 'expense') {
+    const cats = DB.categories[type];
+    openSheet(`
+      <h3>🏷️ 카테고리 관리</h3>
+      <div class="seg" id="cseg">
+        <button data-t="expense" class="${type === 'expense' ? 'on expense' : ''}">지출</button>
+        <button data-t="income" class="${type === 'income' ? 'on income' : ''}">수입</button>
+      </div>
+      <div style="margin-top:14px">
+        ${cats.map((c, i) => `<div class="list-item">
+          <span class="ic">${c.emoji}</span><div class="grow">${esc(c.name)}</div>
+          <button data-del="${i}" style="color:var(--expense);font-size:20px">×</button>
+        </div>`).join('')}
+      </div>
+      <div class="row" style="margin-top:14px">
+        <input id="c-emoji" type="text" maxlength="2" placeholder="🍔" style="flex:0 0 64px;text-align:center;padding:13px;border:1px solid var(--line);border-radius:12px;background:var(--card-2)">
+        <input id="c-name" type="text" placeholder="새 분류 이름" style="flex:1;padding:13px 14px;border:1px solid var(--line);border-radius:12px;background:var(--card-2)">
+      </div>
+      <button class="btn ghost" id="c-add" style="margin-top:10px">+ 분류 추가</button>
+    `);
+    sheetEl.querySelectorAll('#cseg button').forEach((b) => b.onclick = () => paint(b.dataset.t));
+    sheetEl.querySelectorAll('[data-del]').forEach((b) => b.onclick = () => {
+      if (cats.length <= 1) return toast('최소 1개는 있어야 해요');
+      cats.splice(Number(b.dataset.del), 1); save(); paint(type);
+    });
+    sheetEl.querySelector('#c-add').onclick = () => {
+      const name = sheetEl.querySelector('#c-name').value.trim();
+      const emoji = sheetEl.querySelector('#c-emoji').value.trim() || (type === 'income' ? '✨' : '💸');
+      if (!name) return toast('이름을 입력해주세요');
+      if (cats.find((c) => c.name === name)) return toast('이미 있는 분류예요');
+      cats.push({ name, emoji }); save(); paint(type);
+    };
+  }
+  paint();
+}
+
+/* ================================================================
+   AI 피드백 (Claude API 직접 호출 — 브라우저)
+   ================================================================ */
+function openAISettings() {
+  openSheet(`
+    <h3>🤖 AI 피드백 설정</h3>
+    <div class="hint" style="margin-bottom:14px;line-height:1.6">
+      Claude API 키를 넣으면 이번 달 소비를 분석해 조언해줘요.
+      키는 <b>이 기기에만</b> 저장되고, 분석할 때만 Anthropic 서버로 요약이 전송됩니다.
+      키는 <a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com</a>에서 발급해요.
+    </div>
+    <div class="field"><label>API 키 (sk-ant-...)</label>
+      <input id="ai-key" type="password" placeholder="sk-ant-..." value="${esc(DB.settings.apiKey || '')}"></div>
+    <div class="field"><label>모델</label>
+      <select id="ai-model">
+        <option value="claude-opus-4-8" ${DB.settings.model === 'claude-opus-4-8' ? 'selected' : ''}>Claude Opus 4.8 (가장 똑똑함)</option>
+        <option value="claude-haiku-4-5" ${DB.settings.model === 'claude-haiku-4-5' ? 'selected' : ''}>Claude Haiku 4.5 (가장 저렴/빠름)</option>
+      </select>
+      <div class="hint">가볍게 쓰려면 Haiku, 더 깊은 분석을 원하면 Opus를 고르세요.</div>
+    </div>
+    <button class="btn primary" id="ai-save">저장</button>
+  `);
+  sheetEl.querySelector('#ai-save').onclick = () => {
+    DB.settings.apiKey = sheetEl.querySelector('#ai-key').value.trim();
+    DB.settings.model = sheetEl.querySelector('#ai-model').value;
+    save(); closeSheet(); render(); toast('저장했어요');
+  };
+}
+
+async function runAIFeedback() {
+  const out = document.getElementById('ai-out');
+  const btn = document.getElementById('ai-btn');
+  if (!DB.settings.apiKey) {
+    openAISettings();
+    return;
+  }
+  const list = txOfMonth(curMonth);
+  if (!list.length) { out.innerHTML = `<div class="hint" style="margin-top:12px">이 달의 기록이 없어 분석할 게 없어요.</div>`; return; }
+
+  const income = sum(list, 'income'), expense = sum(list, 'expense');
+  const totals = catTotals(curMonth, 'expense');
+  const target = DB.goals.monthlySpend, saveGoal = DB.goals.annualSaving;
+  const saved = yearNet(curMonth.slice(0, 4));
+
+  // 개인정보 최소화: 원시 메모가 아닌 '요약'만 전송
+  const summary = [
+    `기간: ${monthLabel(curMonth)}`,
+    `총수입: ${income}원, 총지출: ${expense}원, 잔액: ${income - expense}원`,
+    target ? `이번 달 지출 목표: ${target}원` : '지출 목표 미설정',
+    saveGoal ? `연간 저축 목표: ${saveGoal}원, 올해 누적 저축: ${saved}원` : '저축 목표 미설정',
+    '카테고리별 지출:',
+    ...totals.map(([n, v]) => ` - ${n}: ${v}원 (${Math.round(v / expense * 100)}%)`)
+  ].join('\n');
+
+  out.innerHTML = `<div class="hint" style="margin-top:14px">🤖 분석 중이에요...</div>`;
+  btn.disabled = true;
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': DB.settings.apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: DB.settings.model,
+        max_tokens: 1024,
+        system: '너는 다정하고 현실적인 한국어 가계부 코치야. 사용자의 이번 달 소비 요약을 보고, 칭찬할 점 1가지, 개선하면 좋을 점 1~2가지, 다음 달을 위한 구체적이고 실천 가능한 팁 2가지를 짧게 알려줘. 존댓말로, 이모지를 적당히 섞어서 따뜻하게. 마크다운 헤더(#)는 쓰지 말고 짧은 문단과 불릿(•)만 사용해.',
+        messages: [{ role: 'user', content: `이번 달 내 소비 요약이야:\n\n${summary}\n\n피드백 부탁해!` }]
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      const msg = data?.error?.message || `오류 (${res.status})`;
+      out.innerHTML = `<div class="hint" style="margin-top:14px;color:var(--expense)">AI 호출 실패: ${esc(msg)}<br>API 키와 결제 설정을 확인해주세요.</div>`;
+      return;
+    }
+    const text = (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
+    out.innerHTML = `<div class="card" style="margin:14px 0 0;background:var(--accent-soft);box-shadow:none">
+      <div style="white-space:pre-wrap;line-height:1.65">${esc(text)}</div></div>`;
+  } catch (e) {
+    out.innerHTML = `<div class="hint" style="margin-top:14px;color:var(--expense)">네트워크 오류예요. 인터넷 연결을 확인해주세요.</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ================================================================
+   데이터 백업/복원/삭제
+   ================================================================ */
+function exportData() {
+  const blob = new Blob([JSON.stringify(DB, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `머니북_백업_${todayStr()}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+  toast('백업 파일을 저장했어요');
+}
+function importData() {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = 'application/json,.json';
+  input.onchange = () => {
+    const f = input.files[0]; if (!f) return;
+    const r = new FileReader();
+    r.onload = () => {
+      try {
+        const obj = JSON.parse(r.result);
+        if (!obj || !Array.isArray(obj.tx)) throw 0;
+        if (!confirm('현재 데이터를 백업 파일로 덮어쓸까요?')) return;
+        DB = { ...structuredClone(DEFAULTS), ...obj };
+        DB.goals = { ...DEFAULTS.goals, ...(DB.goals || {}) };
+        DB.settings = { ...DEFAULTS.settings, ...(DB.settings || {}) };
+        save(); render(); toast('복원했어요 ✓');
+      } catch { toast('올바른 백업 파일이 아니에요'); }
+    };
+    r.readAsText(f);
+  };
+  input.click();
+}
+function resetData() {
+  if (!confirm('정말 모든 데이터를 삭제할까요? 되돌릴 수 없어요.')) return;
+  if (!confirm('마지막 확인이에요. 백업은 하셨나요?')) return;
+  localStorage.removeItem(KEY); load(); curMonth = ym(todayStr()); render(); toast('초기화했어요');
+}
+
+/* ---------- 공통 ---------- */
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+let toastTimer;
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.remove('hidden');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.add('hidden'), 1900);
+}
+
+/* ---------- 부팅 ---------- */
+document.getElementById('fab').onclick = () => openEditor(null);
+document.querySelectorAll('.tab').forEach((b) => b.onclick = () => { curTab = b.dataset.tab; render(); });
+
+load();
+runRecurring();
+render();
+
+// 서비스 워커 등록 (오프라인 지원)
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}

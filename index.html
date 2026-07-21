@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+  <title>머니북 가계부</title>
+  <meta name="theme-color" content="#16a085" />
+  <link rel="manifest" href="manifest.json" />
+  <!-- iOS 홈 화면 앱 설정 -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="머니북" />
+  <link rel="apple-touch-icon" href="icons/icon-180.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- 화면들 -->
+    <main id="view"></main>
+
+    <!-- 하단 탭바 -->
+    <nav id="tabbar">
+      <button class="tab" data-tab="home" aria-label="홈">
+        <span class="ic">🏠</span><span>홈</span>
+      </button>
+      <button class="tab" data-tab="list" aria-label="내역">
+        <span class="ic">📄</span><span>내역</span>
+      </button>
+      <button id="fab" aria-label="입력 추가">＋</button>
+      <button class="tab" data-tab="stats" aria-label="통계">
+        <span class="ic">📊</span><span>통계</span>
+      </button>
+      <button class="tab" data-tab="more" aria-label="더보기">
+        <span class="ic">⚙️</span><span>더보기</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- 입력/편집 시트 -->
+  <div id="sheet" class="sheet hidden" aria-hidden="true"></div>
+  <div id="backdrop" class="backdrop hidden"></div>
+
+  <!-- 토스트 -->
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
