@@ -24,7 +24,7 @@ const DEFAULTS = {
       { name: '부수입', emoji: '📈' }, { name: '기타수입', emoji: '✨' }
     ]
   },
-  settings: { apiKey: '', model: 'claude-opus-4-8' }
+  settings: { apiKey: '', model: 'claude-opus-4-8', theme: 'system' }
 };
 
 let DB;
@@ -37,6 +37,19 @@ function load() {
   DB.categories = DB.categories || structuredClone(DEFAULTS.categories);
 }
 function save() { localStorage.setItem(KEY, JSON.stringify(DB)); }
+
+/* ---------- 테마 ---------- */
+function applyTheme() {
+  const t = DB.settings.theme || 'system';
+  const dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.classList.toggle('theme-dark', dark);
+  const meta = document.getElementById('theme-color');
+  if (meta) meta.setAttribute('content', dark ? '#101014' : '#3182F6');
+}
+// 시스템 테마가 바뀌면 (설정이 '시스템'일 때) 자동 반영
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+  if ((DB.settings.theme || 'system') === 'system') applyTheme();
+});
 
 /* ---------- 유틸 ---------- */
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -390,6 +403,8 @@ function renderMore() {
         <div class="grow"><div>카테고리 관리</div></div><span class="chev">›</span></div>
     </div>
     <div class="card">
+      <div class="list-item" data-go="theme"><span class="ic">🌗</span>
+        <div class="grow"><div>화면 테마</div><div class="sub">${{ system: '시스템 자동', light: '밝게', dark: '어둡게' }[DB.settings.theme || 'system']}</div></div><span class="chev">›</span></div>
       <div class="list-item" data-go="ai"><span class="ic">🤖</span>
         <div class="grow"><div>AI 피드백 설정</div><div class="sub">${DB.settings.apiKey ? '연결됨 · ' + DB.settings.model : 'API 키 미설정'}</div></div><span class="chev">›</span></div>
     </div>
@@ -406,7 +421,8 @@ function renderMore() {
 }
 
 function moreAction(what) {
-  if (what === 'goals') openGoals();
+  if (what === 'theme') openTheme();
+  else if (what === 'goals') openGoals();
   else if (what === 'budgets') openBudgets();
   else if (what === 'recurring') openRecurringList();
   else if (what === 'categories') openCategories();
@@ -497,6 +513,28 @@ function openEditor(id, preset) {
     save(); closeSheet(); render(); toast(editing ? '수정했어요' : '추가했어요 ✓');
   }
   paint();
+}
+
+/* ---------- 화면 테마 ---------- */
+function openTheme() {
+  const cur = DB.settings.theme || 'system';
+  const opts = [
+    { v: 'system', emoji: '📱', name: '시스템 자동', sub: '아이폰 설정을 따라가요' },
+    { v: 'light', emoji: '☀️', name: '밝게', sub: '항상 라이트 모드' },
+    { v: 'dark', emoji: '🌙', name: '어둡게', sub: '항상 다크 모드' }
+  ];
+  openSheet(`
+    <h3>🌗 화면 테마</h3>
+    ${opts.map((o) => `<div class="list-item" data-theme="${o.v}">
+      <span class="ic">${o.emoji}</span>
+      <div class="grow"><div>${o.name}</div><div class="sub">${o.sub}</div></div>
+      <span class="chev" style="color:var(--accent);font-size:18px">${cur === o.v ? '✓' : ''}</span>
+    </div>`).join('')}
+  `);
+  sheetEl.querySelectorAll('[data-theme]').forEach((el) => el.onclick = () => {
+    DB.settings.theme = el.dataset.theme;
+    save(); applyTheme(); closeSheet(); render(); toast('테마를 바꿨어요');
+  });
 }
 
 /* ---------- 목표 설정 ---------- */
@@ -731,7 +769,7 @@ async function runAIFeedback() {
       return;
     }
     const text = (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
-    out.innerHTML = `<div class="card" style="margin:14px 0 0;background:var(--accent-soft);box-shadow:none">
+    out.innerHTML = `<div class="card" style="margin:14px 0 0;background:var(--accent-weak);box-shadow:none">
       <div style="white-space:pre-wrap;line-height:1.65">${esc(text)}</div></div>`;
   } catch (e) {
     out.innerHTML = `<div class="hint" style="margin-top:14px;color:var(--expense)">네트워크 오류예요. 인터넷 연결을 확인해주세요.</div>`;
@@ -793,6 +831,7 @@ document.getElementById('fab').onclick = () => openEditor(null);
 document.querySelectorAll('.tab').forEach((b) => b.onclick = () => { curTab = b.dataset.tab; render(); });
 
 load();
+applyTheme();
 runRecurring();
 render();
 
