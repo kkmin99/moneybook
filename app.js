@@ -437,6 +437,15 @@ function renderSave() {
   const expense = sum(monthList, 'expense');
   const saved = income - expense;
 
+  // 적립 현황 (자산별 contribs 집계)
+  const contribByMonth = {};
+  for (const a of DB.assets) for (const c of (a.contribs || [])) contribByMonth[c.ym] = (contribByMonth[c.ym] || 0) + c.amount;
+  const thisMonthContribs = [];
+  for (const a of DB.assets) for (const c of (a.contribs || [])) if (c.ym === nowYM) thisMonthContribs.push({ name: a.name, emoji: assetEmoji(a.type), amount: c.amount });
+  const thisContribTotal = contribByMonth[nowYM] || 0;
+  const months6 = []; { let mm = nowYM; for (let i = 0; i < 6; i++) { months6.unshift(mm); mm = shiftMonth(mm, -1); } }
+  const maxC = Math.max(1, ...months6.map((mm) => contribByMonth[mm] || 0));
+
   let allocHTML;
   if (income > 0) {
     allocHTML = DB.allocation.map((b) => {
@@ -474,6 +483,17 @@ function renderSave() {
     </div>
 
     <div class="card">
+      <h2>💧 적립 현황</h2>
+      <div class="muted tiny">이번 달 모은 돈</div>
+      <div class="num" style="font-size:26px;font-weight:800;color:var(--income);margin:2px 0 10px">${(thisContribTotal >= 0 ? '+' : '') + won(thisContribTotal)}</div>
+      <div class="mbars">
+        ${months6.map((mm) => { const v = contribByMonth[mm] || 0; const h = v > 0 ? Math.max(8, v / maxC * 100) : 0; return `<div class="mbar"><div class="fill ${mm === nowYM ? 'on' : ''}" style="height:${h}%"></div><span>${+mm.slice(5, 7)}월</span></div>`; }).join('')}
+      </div>
+      ${thisMonthContribs.length ? `<div style="margin-top:12px">${thisMonthContribs.map((c) => `<div class="tx" style="padding:9px 0"><div class="emoji" style="width:34px;height:34px;font-size:16px">${c.emoji}</div><div class="mid"><div class="cat" style="font-size:14px">${esc(c.name)}</div></div><div class="amt income num">+${won(c.amount)}</div></div>`).join('')}</div>` : `<div class="hint" style="margin-top:10px">아래 버튼으로 이번 달 적립을 기록해보세요.</div>`}
+      <button class="btn soft" data-contrib style="margin-top:14px">+ 적립 기록하기</button>
+    </div>
+
+    <div class="card">
       <h2>💰 월급 배분 <span class="muted tiny" style="font-weight:600">이번 달 수입 ${won(income)}</span></h2>
       ${allocHTML}
       ${income > 0 ? `<div class="hint" style="margin-top:2px">이번 달 실제로 남긴 돈: <b class="num" style="color:var(--income)">${(saved >= 0 ? '+' : '') + won(saved)}</b></div>` : ''}
@@ -487,6 +507,7 @@ function renderSave() {
     ${assetCards}
   `;
   view.querySelector('[data-alloc]').onclick = openAllocation;
+  view.querySelector('[data-contrib]').onclick = () => openContribution(null);
   view.querySelector('[data-addasset]').onclick = () => openAsset(null);
   const eg = view.querySelector('[data-editgoal]'); if (eg) eg.onclick = openAssetGoal;
   view.querySelectorAll('[data-asset]').forEach((el) => el.onclick = () => openAsset(el.dataset.asset));
@@ -533,11 +554,40 @@ function openAsset(id) {
     if (!name) return toast('이름을 입력해주세요');
     if (value <= 0) return toast('평가금액을 입력해주세요');
     const rec = { type: d.type, name, value, principal: principal || 0, memo };
-    if (editing) Object.assign(editing, rec); else DB.assets.push({ id: uid(), ...rec });
+    if (editing) Object.assign(editing, rec); else DB.assets.push({ id: uid(), contribs: [], ...rec });
     save(); closeSheet(); render(); toast(editing ? '저장했어요 ✓' : '추가했어요 ✓');
   };
   if (editing) sheetEl.querySelector('#a-del').onclick = () => {
     if (confirm('이 자산을 삭제할까요?')) { DB.assets = DB.assets.filter((a) => a.id !== id); save(); closeSheet(); render(); toast('삭제했어요'); }
+  };
+}
+
+function openContribution(assetId) {
+  if (!DB.assets.length) { toast('먼저 자산을 추가해주세요'); return openAsset(null); }
+  const nowYM = ym(todayStr());
+  const d = { asset: assetId || DB.assets[0].id };
+  openSheet(`
+    <h3>💧 적립 기록</h3>
+    <div class="field"><label>어떤 자산에</label>
+      <div class="chips" id="c-assets">${DB.assets.map((a) => `<button class="chip ${a.id === d.asset ? 'on' : ''}" data-a="${a.id}">${assetEmoji(a.type)} ${esc(a.name)}</button>`).join('')}</div></div>
+    <div class="field"><label>이번에 넣은 금액</label><input id="c-amt" class="amount-input" type="number" inputmode="numeric" placeholder="0"></div>
+    <div class="field"><label>어느 달</label><input id="c-ym" type="month" value="${nowYM}"></div>
+    <div class="hint">적립하면 그 자산의 평가금액이 자동으로 늘어나요. (원금을 넣은 투자자산이면 원금도 함께 증가)</div>
+    <button class="btn primary" id="c-save" style="margin-top:12px">적립하기</button>
+  `);
+  sheetEl.querySelectorAll('#c-assets .chip').forEach((b) => b.onclick = () => {
+    sheetEl.querySelectorAll('#c-assets .chip').forEach((x) => x.classList.remove('on')); b.classList.add('on'); d.asset = b.dataset.a;
+  });
+  sheetEl.querySelector('#c-save').onclick = () => {
+    const amt = Math.round(Number(sheetEl.querySelector('#c-amt').value) || 0);
+    const mym = sheetEl.querySelector('#c-ym').value || nowYM;
+    if (amt <= 0) return toast('금액을 입력해주세요');
+    const a = DB.assets.find((x) => x.id === d.asset);
+    if (!a) return toast('자산을 선택해주세요');
+    a.value = (a.value || 0) + amt;
+    if (a.principal > 0) a.principal += amt;
+    (a.contribs || (a.contribs = [])).push({ ym: mym, amount: amt });
+    save(); closeSheet(); render(); toast('적립했어요 ✓');
   };
 }
 
