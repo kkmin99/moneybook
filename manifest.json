@@ -1,7 +1,7 @@
 {
-  "name": "머니북 가계부",
-  "short_name": "머니북",
-  "description": "심플하고 가독성 좋은 개인 가계부",
+  "name": "억을모으자",
+  "short_name": "억을모으자",
+  "description": "억을 향해! 귀엽고 심플한 개인 가계부",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

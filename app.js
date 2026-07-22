@@ -1,6 +1,6 @@
 'use strict';
 /* ================================================================
-   머니북 가계부 — 모든 데이터는 이 기기(localStorage)에만 저장됩니다.
+   억을모으자 — 모든 데이터는 이 기기(localStorage)에만 저장됩니다.
    서버로 전송되는 것은 오직 'AI 피드백'을 켰을 때 Claude API 호출뿐입니다.
    ================================================================ */
 
@@ -785,7 +785,7 @@ function exportData() {
   const blob = new Blob([JSON.stringify(DB, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = `머니북_백업_${todayStr()}.json`;
+  a.href = url; a.download = `억을모으자_백업_${todayStr()}.json`;
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
   toast('백업 파일을 저장했어요');
