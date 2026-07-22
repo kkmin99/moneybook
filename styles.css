@@ -57,10 +57,11 @@ input, select, textarea { font-family: inherit; font-size: 16px; color: var(--te
 .brand { display: flex; align-items: center; justify-content: center; gap: 7px; padding: 10px 2px 4px; }
 .brand .logo { width: 32px; height: 32px; flex-shrink: 0; }
 .brand .wm {
-  font-family: 'Yeon Sung', 'Nanum Pen Script', 'Gaegu', cursive;
-  font-size: 31px; line-height: 1; color: var(--accent);
-  padding-top: 4px;   /* 손글씨 세로 정렬 보정 */
+  font-family: 'Gaegu', 'Nanum Pen Script', cursive;
+  font-size: 30px; line-height: 1; color: #f76c8e;   /* 을모으자 = 코랄핑크 */
+  padding-top: 2px;
 }
+.brand .wm .hi { color: #ff9f1c; font-size: 1.14em; }  /* 억 = 골드오렌지 강조 */
 
 /* ── 상단 월 선택 바 ── */
 .appbar { display: flex; align-items: center; justify-content: center; position: relative; height: 52px; margin-bottom: 6px; }
