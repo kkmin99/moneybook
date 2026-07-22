@@ -201,7 +201,7 @@ function renderHome() {
   view.innerHTML = `
     <div class="brand">
       <img class="logo" src="icons/icon-192.png" alt="">
-      <div class="bt"><b>억을모으자</b><span>티끌 모아 억! 오늘도 차곡차곡 💪</span></div>
+      <span class="wm">억을모으자</span>
     </div>
     ${monthBarHTML()}
     <div class="hero">
