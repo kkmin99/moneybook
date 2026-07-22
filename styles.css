@@ -58,8 +58,7 @@ input, select, textarea { font-family: inherit; font-size: 16px; color: var(--te
 .brand .logo { width: 27px; height: 27px; border-radius: 8px; flex-shrink: 0; }
 .brand .wm {
   font-size: 21px; font-weight: 800; letter-spacing: -0.035em; line-height: 1;
-  background: linear-gradient(115deg, #3d8bff, #1b5fd6);
-  -webkit-background-clip: text; background-clip: text; color: transparent;
+  color: var(--accent);
 }
 
 /* ── 상단 월 선택 바 ── */
@@ -114,15 +113,15 @@ input, select, textarea { font-family: inherit; font-size: 16px; color: var(--te
 .day.sun .dnum { color: var(--expense); }
 .day.sat .dnum { color: var(--accent); }
 .day.today .dnum { background: var(--accent); color: #fff; font-weight: 800; }
-.day .damt { margin-top: 3px; display: flex; flex-direction: column; align-items: center; gap: 1px; line-height: 1.15; }
-.day .damt .e { font-size: 10.5px; font-weight: 700; color: var(--expense); letter-spacing: -0.03em; }
-.day .damt .i { font-size: 9.5px; font-weight: 700; color: var(--income); letter-spacing: -0.03em; }
+.day .damt { margin-top: 3px; display: flex; flex-direction: column; align-items: center; gap: 1px; line-height: 1.1; width: 100%; }
+.day .damt .e { font-size: 9px; font-weight: 700; color: var(--expense); letter-spacing: -0.04em; white-space: nowrap; }
+.day .damt .i { font-size: 8.5px; font-weight: 700; color: var(--income); letter-spacing: -0.04em; white-space: nowrap; }
 
 /* ── 미니 인사이트 pill ── */
 .pills { display: flex; gap: 10px; margin-bottom: 14px; }
 .pill { flex: 1; background: var(--card); border-radius: var(--r-md); box-shadow: var(--shadow); padding: 14px; }
 .pill .k { font-size: 12px; color: var(--text-dim); font-weight: 600; }
-.pill .v { font-size: 18px; font-weight: 800; letter-spacing: -0.02em; margin-top: 3px; }
+.pill .v { font-size: 14.5px; font-weight: 800; letter-spacing: -0.03em; margin-top: 3px; white-space: nowrap; }
 .pill .v.exp { color: var(--text); }
 .pill .v.inc { color: var(--income); }
 

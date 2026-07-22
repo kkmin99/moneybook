@@ -54,6 +54,7 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
 /* ---------- 유틸 ---------- */
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const won = (n) => (n < 0 ? '-' : '') + '₩' + Math.abs(Math.round(n)).toLocaleString('ko-KR');
+const comma = (n) => Math.round(Math.abs(n)).toLocaleString('ko-KR');   // 콤마만 (₩ 없이)
 const wonShort = (n) => {
   const a = Math.abs(n);
   if (a >= 100000000) return (n / 100000000).toFixed(1).replace(/\.0$/, '') + '억';
@@ -207,7 +208,7 @@ function renderHome() {
     <div class="hero">
       <div class="label">이번 달 지출</div>
       <div class="big num">${won(expense)}</div>
-      <div class="sub">수입 <span class="inc num">${wonShort(income)}</span> · 잔액 <span class="bal num">${(balance >= 0 ? '+' : '') + wonShort(balance)}</span></div>
+      <div class="sub">수입 <span class="inc num">${won(income)}</span> · 잔액 <span class="bal num">${(balance >= 0 ? '+' : '') + won(balance)}</span></div>
       ${goalSlimHTML(expense)}
     </div>
     <div class="card cal">
@@ -233,7 +234,7 @@ function dayCellHTML(ds, dnum, dim, byDay, maxE, todayS) {
   if (ds === todayS) cls.push('today');
   let amt = '';
   if (dd.e || dd.i) {
-    amt = `<div class="damt">${dd.e ? `<span class="e num">${calAmt(dd.e)}</span>` : ''}${dd.i ? `<span class="i num">+${calAmt(dd.i)}</span>` : ''}</div>`;
+    amt = `<div class="damt">${dd.e ? `<span class="e num">${comma(dd.e)}</span>` : ''}${dd.i ? `<span class="i num">+${comma(dd.i)}</span>` : ''}</div>`;
   }
   return `<button class="${cls.join(' ')}" data-date="${ds}" style="--heat:${heat}"><span class="dnum num">${dnum}</span>${amt}</button>`;
 }
@@ -295,9 +296,9 @@ function renderList() {
     <div class="page-title">내역</div>
     ${monthBarHTML()}
     <div class="pills">
-      <div class="pill"><div class="k">수입</div><div class="v inc num">${wonShort(income)}</div></div>
-      <div class="pill"><div class="k">지출</div><div class="v exp num">${wonShort(expense)}</div></div>
-      <div class="pill"><div class="k">잔액</div><div class="v exp num">${(income - expense >= 0 ? '+' : '') + wonShort(income - expense)}</div></div>
+      <div class="pill"><div class="k">수입</div><div class="v inc num">${won(income)}</div></div>
+      <div class="pill"><div class="k">지출</div><div class="v exp num">${won(expense)}</div></div>
+      <div class="pill"><div class="k">잔액</div><div class="v exp num">${(income - expense >= 0 ? '+' : '') + won(income - expense)}</div></div>
     </div>
     ${body}
   `;
