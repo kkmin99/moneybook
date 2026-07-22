@@ -201,7 +201,7 @@ function renderHome() {
 
   view.innerHTML = `
     <div class="brand">
-      <img class="logo" src="icons/icon-192.png" alt="">
+      <img class="logo" src="icons/coin.png" alt="">
       <span class="wm">억을모으자</span>
     </div>
     ${monthBarHTML()}
