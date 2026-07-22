@@ -112,78 +112,133 @@ function render() {
   window.scrollTo(0, 0);
 }
 
-function monthNavHTML() {
-  return `<div class="month-nav">
-    <button data-mn="-1">‹</button>
-    <span class="label">${monthLabel(curMonth)}</span>
-    <button data-mn="1">›</button>
+// 상단 월 선택 바 (‹ 2026년 7월 › + 오늘 버튼)
+function monthBarHTML() {
+  const isCur = curMonth === ym(todayStr());
+  return `<div class="appbar">
+    <div class="mtitle">
+      <button data-mn="-1">‹</button>
+      <b class="num">${monthLabel(curMonth)}</b>
+      <button data-mn="1">›</button>
+    </div>
+    ${isCur ? '' : `<button class="today-btn" data-today>오늘</button>`}
+  </div>`;
+}
+function bindMonthNav() {
+  view.querySelectorAll('[data-mn]').forEach((b) => b.onclick = () => { curMonth = shiftMonth(curMonth, +b.dataset.mn); render(); });
+  const t = view.querySelector('[data-today]');
+  if (t) t.onclick = () => { curMonth = ym(todayStr()); render(); };
+}
+
+// 캘린더용 초압축 금액 표기 (3.2만 / 12만 / 8천 / 500)
+function calAmt(n) {
+  if (n >= 100000000) return (n / 100000000).toFixed(1).replace(/\.0$/, '') + '억';
+  if (n >= 10000) { const v = n / 10000; return (v >= 10 ? Math.round(v) : v.toFixed(1).replace(/\.0$/, '')) + '만'; }
+  if (n >= 1000) return Math.round(n / 1000) + '천';
+  return String(n);
+}
+
+// 목표 진행 바(얇은 버전)
+function goalSlimHTML(expense) {
+  const target = DB.goals.monthlySpend;
+  if (!target) return '';
+  const pct = Math.min(100, (expense / target) * 100);
+  const cls = expense > target ? 'over' : (pct > 85 ? 'warn' : '');
+  const remain = target - expense;
+  return `<div class="slim">
+    <div class="top"><span>지출 목표</span><span class="r num">${won(expense)} / ${won(target)}</span></div>
+    <div class="track ${cls}"><span style="width:${pct}%"></span></div>
+    <div class="hint">${remain >= 0 ? `${won(remain)} 남았어요` : `${won(-remain)} 초과했어요`}</div>
   </div>`;
 }
 
-/* ---------- 홈 ---------- */
+/* ---------- 홈 = 월간 캘린더 ---------- */
 function renderHome() {
   const list = txOfMonth(curMonth);
-  const income = sum(list, 'income');
-  const expense = sum(list, 'expense');
+  const income = sum(list, 'income'), expense = sum(list, 'expense');
   const balance = income - expense;
 
-  const target = DB.goals.monthlySpend;
-  const year = curMonth.slice(0, 4);
-  const saved = yearNet(year);
-  const savingGoal = DB.goals.annualSaving;
+  // 날짜별 지출/수입 합계 (전체 DB 기준 — 이웃 달 칸도 채우기 위함)
+  const byDay = {};
+  for (const t of DB.tx) { (byDay[t.date] ||= { e: 0, i: 0 })[t.type === 'expense' ? 'e' : 'i'] += t.amount; }
+  // 히트맵 강도는 '이번 달' 최대 지출일 기준
+  const monthExpByDay = {};
+  for (const t of list) if (t.type === 'expense') monthExpByDay[t.date] = (monthExpByDay[t.date] || 0) + t.amount;
+  const maxE = Math.max(1, ...Object.values(monthExpByDay));
 
-  let goalsHTML = '';
-  if (target > 0) {
-    const pct = Math.min(100, (expense / target) * 100);
-    const cls = expense > target ? 'over' : (pct > 85 ? 'warn' : '');
-    goalsHTML += `<div class="goal">
-      <div class="top"><span class="name">이번 달 지출 목표</span>
-        <span class="val">${won(expense)} / ${won(target)}</span></div>
-      <div class="bar ${cls}"><span style="width:${pct}%"></span></div>
-      <div class="hint">${expense > target ? `목표보다 ${won(expense - target)} 초과했어요` : `${won(target - expense)} 남았어요`}</div>
-    </div>`;
-  }
-  if (savingGoal > 0) {
-    const pct = Math.max(0, Math.min(100, (saved / savingGoal) * 100));
-    goalsHTML += `<div class="goal">
-      <div class="top"><span class="name">${year}년 저축 목표</span>
-        <span class="val">${won(saved)} / ${won(savingGoal)}</span></div>
-      <div class="bar ${saved < 0 ? 'over' : ''}"><span style="width:${pct}%"></span></div>
-      <div class="hint">${saved >= savingGoal ? '목표 달성! 🎉' : saved < 0 ? '올해 지출이 수입보다 많아요' : `목표까지 ${won(savingGoal - saved)}`}</div>
-    </div>`;
-  }
+  const [Y, Mo] = curMonth.split('-').map(Number);
+  const startWd = new Date(Y, Mo - 1, 1).getDay();       // 1일의 요일 (0=일)
+  const daysInMonth = new Date(Y, Mo, 0).getDate();
+  const prevDays = new Date(Y, Mo - 1, 0).getDate();
+  const todayS = todayStr();
 
-  const recent = [...list].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 5);
+  let cells = '';
+  for (let i = startWd - 1; i >= 0; i--) {               // 앞 달 잔여일 (흐리게)
+    const d = prevDays - i;
+    cells += dayCellHTML(`${shiftMonth(curMonth, -1)}-${String(d).padStart(2, '0')}`, d, true, byDay, maxE, todayS);
+  }
+  for (let d = 1; d <= daysInMonth; d++) {
+    cells += dayCellHTML(`${curMonth}-${String(d).padStart(2, '0')}`, d, false, byDay, maxE, todayS);
+  }
+  const trail = (7 - ((startWd + daysInMonth) % 7)) % 7; // 다음 달 채우기
+  for (let d = 1; d <= trail; d++) {
+    cells += dayCellHTML(`${shiftMonth(curMonth, 1)}-${String(d).padStart(2, '0')}`, d, true, byDay, maxE, todayS);
+  }
 
   view.innerHTML = `
-    <div class="page-head"><h1>머니북</h1>${monthNavHTML()}</div>
-
-    <div class="card summary">
-      <h2>이번 달 잔액</h2>
-      <div class="balance">${won(balance)}</div>
-      <div class="row2">
-        <div><div class="k">수입</div><div class="v">${wonShort(income)}</div></div>
-        <div><div class="k">지출</div><div class="v">${wonShort(expense)}</div></div>
-      </div>
+    ${monthBarHTML()}
+    <div class="hero">
+      <div class="label">이번 달 지출</div>
+      <div class="big num">${won(expense)}</div>
+      <div class="sub">수입 <span class="inc num">${wonShort(income)}</span> · 잔액 <span class="bal num">${(balance >= 0 ? '+' : '') + wonShort(balance)}</span></div>
+      ${goalSlimHTML(expense)}
     </div>
-
-    ${goalsHTML ? `<div class="card">${goalsHTML}</div>` : ''}
-
-    <div class="card">
-      <button class="btn primary" id="ai-btn">🤖 이번 달 AI 소비 피드백 받기</button>
-      <div id="ai-out"></div>
+    <div class="card cal">
+      <div class="cal-week"><span class="sun">일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span class="sat">토</span></div>
+      <div class="cal-grid">${cells}</div>
     </div>
-
-    <div class="card">
-      <h2>최근 내역</h2>
-      ${recent.length ? recent.map(txRowHTML).join('') :
-        `<div class="empty"><div class="big">📭</div>아직 기록이 없어요.<br>아래 <b>＋</b> 버튼으로 추가해보세요.</div>`}
-    </div>
+    <button class="btn soft" id="ai-btn">🤖 이번 달 AI 소비 피드백</button>
+    <div id="ai-out"></div>
   `;
 
-  view.querySelectorAll('[data-mn]').forEach((b) => b.onclick = () => { curMonth = shiftMonth(curMonth, +b.dataset.mn); render(); });
-  view.querySelectorAll('.tx').forEach((el) => el.onclick = () => openEditor(el.dataset.id));
+  bindMonthNav();
+  view.querySelectorAll('.day[data-date]').forEach((el) => el.onclick = () => openDay(el.dataset.date));
   document.getElementById('ai-btn').onclick = runAIFeedback;
+}
+
+function dayCellHTML(ds, dnum, dim, byDay, maxE, todayS) {
+  const wd = new Date(ds + 'T00:00').getDay();
+  const dd = byDay[ds] || { e: 0, i: 0 };
+  const heat = dim ? 0 : Math.min(0.16, dd.e / maxE * 0.16);
+  const cls = ['day'];
+  if (dim) cls.push('dim');
+  if (wd === 0) cls.push('sun'); else if (wd === 6) cls.push('sat');
+  if (ds === todayS) cls.push('today');
+  let amt = '';
+  if (dd.e || dd.i) {
+    amt = `<div class="damt">${dd.e ? `<span class="e num">${calAmt(dd.e)}</span>` : ''}${dd.i ? `<span class="i num">+${calAmt(dd.i)}</span>` : ''}</div>`;
+  }
+  return `<button class="${cls.join(' ')}" data-date="${ds}" style="--heat:${heat}"><span class="dnum num">${dnum}</span>${amt}</button>`;
+}
+
+/* ---------- 하루 상세 시트 ---------- */
+function openDay(dateStr) {
+  const dayList = DB.tx.filter((t) => t.date === dateStr).sort((a, b) => (a.type === b.type ? 0 : a.type === 'income' ? -1 : 1));
+  const d = new Date(dateStr + 'T00:00');
+  const wd = ['일', '월', '화', '수', '목', '금', '토'][d.getDay()];
+  const e = sum(dayList, 'expense'), i = sum(dayList, 'income');
+  openSheet(`
+    <h3>${+dateStr.slice(5, 7)}월 ${+dateStr.slice(8, 10)}일 (${wd})</h3>
+    <div class="pills" style="margin-bottom:6px">
+      <div class="pill"><div class="k">지출</div><div class="v exp num">${won(e)}</div></div>
+      <div class="pill"><div class="k">수입</div><div class="v inc num">${won(i)}</div></div>
+    </div>
+    ${dayList.length ? `<div class="card" style="padding:6px 14px;margin-top:14px">${dayList.map(txRowHTML).join('')}</div>`
+      : `<div class="empty" style="padding:30px"><div class="big">🗒️</div>이 날 기록이 없어요.</div>`}
+    <button class="btn primary" id="day-add" style="margin-top:14px">+ 이 날 내역 추가</button>
+  `);
+  sheetEl.querySelectorAll('.tx').forEach((el) => el.onclick = () => openEditor(el.dataset.id, { date: dateStr }));
+  sheetEl.querySelector('#day-add').onclick = () => openEditor(null, { date: dateStr });
 }
 
 function txRowHTML(t) {
@@ -206,34 +261,30 @@ function renderList() {
 
   let body = '';
   if (!list.length) {
-    body = `<div class="empty"><div class="big">📭</div>이 달의 기록이 없어요.</div>`;
+    body = `<div class="card"><div class="empty"><div class="big">🗒️</div>이 달의 기록이 없어요.</div></div>`;
   } else {
-    let lastDate = '';
-    for (const t of list) {
-      if (t.date !== lastDate) {
-        lastDate = t.date;
-        const d = new Date(t.date + 'T00:00');
-        const wd = ['일','월','화','수','목','금','토'][d.getDay()];
-        const dayList = list.filter((x) => x.date === t.date);
-        const dExp = sum(dayList, 'expense');
-        body += `<div class="tx-group-date">${+t.date.slice(5,7)}월 ${+t.date.slice(8,10)}일 (${wd}) · 지출 ${won(dExp)}</div>`;
-      }
-      body += txRowHTML(t);
+    const groups = {};
+    for (const t of list) (groups[t.date] ||= []).push(t);
+    for (const date of Object.keys(groups).sort((a, b) => (a < b ? 1 : -1))) {
+      const g = groups[date];
+      const wd = ['일', '월', '화', '수', '목', '금', '토'][new Date(date + 'T00:00').getDay()];
+      const dExp = sum(g, 'expense');
+      body += `<div class="day-head"><span class="d">${+date.slice(5, 7)}.${+date.slice(8, 10)} ${wd}</span><span class="s">지출 ${won(dExp)}</span></div>
+        <div class="card" style="padding:4px 14px">${g.map(txRowHTML).join('')}</div>`;
     }
   }
 
   view.innerHTML = `
-    <div class="page-head"><h1>내역</h1>${monthNavHTML()}</div>
-    <div class="card summary">
-      <div class="row2" style="margin-top:0">
-        <div><div class="k">수입</div><div class="v">${wonShort(income)}</div></div>
-        <div><div class="k">지출</div><div class="v">${wonShort(expense)}</div></div>
-        <div><div class="k">합계</div><div class="v">${wonShort(income - expense)}</div></div>
-      </div>
+    <div class="page-title">내역</div>
+    ${monthBarHTML()}
+    <div class="pills">
+      <div class="pill"><div class="k">수입</div><div class="v inc num">${wonShort(income)}</div></div>
+      <div class="pill"><div class="k">지출</div><div class="v exp num">${wonShort(expense)}</div></div>
+      <div class="pill"><div class="k">잔액</div><div class="v exp num">${(income - expense >= 0 ? '+' : '') + wonShort(income - expense)}</div></div>
     </div>
     ${body}
   `;
-  view.querySelectorAll('[data-mn]').forEach((b) => b.onclick = () => { curMonth = shiftMonth(curMonth, +b.dataset.mn); render(); });
+  bindMonthNav();
   view.querySelectorAll('.tx').forEach((el) => el.onclick = () => openEditor(el.dataset.id));
 }
 
@@ -280,8 +331,8 @@ function renderStats() {
         const cls = spent > bud ? 'over' : (pct > 85 ? 'warn' : '');
         return `<div class="goal">
           <div class="top"><span class="name">${catInfo('expense', name).emoji} ${esc(name)}</span>
-            <span class="val">${won(spent)} / ${won(bud)}</span></div>
-          <div class="bar ${cls}"><span style="width:${pct}%"></span></div>
+            <span class="val num">${won(spent)} / ${won(bud)}</span></div>
+          <div class="track ${cls}"><span style="width:${pct}%"></span></div>
         </div>`;
       }).join('') + `</div>`;
   }
@@ -293,19 +344,20 @@ function renderStats() {
       return `<div class="cat-line">
         <span class="emoji">${catInfo('expense', name).emoji}</span>
         <div class="grow">
-          <div class="top"><span>${esc(name)}</span><span>${won(v)}</span></div>
-          <div class="bar"><span style="width:${pct}%;background:${PALETTE[i % PALETTE.length]}"></span></div>
+          <div class="top"><span>${esc(name)}</span><span class="num">${won(v)}</span></div>
+          <div class="track"><span style="width:${pct}%;background:${PALETTE[i % PALETTE.length]}"></span></div>
         </div>
       </div>`;
     }).join('') + `</div>` : '';
 
   view.innerHTML = `
-    <div class="page-head"><h1>통계</h1>${monthNavHTML()}</div>
+    <div class="page-title">통계</div>
+    ${monthBarHTML()}
     <div class="card">${donut}</div>
     ${budgetHTML}
     ${detail}
   `;
-  view.querySelectorAll('[data-mn]').forEach((b) => b.onclick = () => { curMonth = shiftMonth(curMonth, +b.dataset.mn); render(); });
+  bindMonthNav();
 }
 
 // 도넛 조각 SVG path
@@ -326,7 +378,7 @@ function renderMore() {
   const rc = DB.recurring.length;
   const bc = Object.values(DB.budgets).filter((v) => v > 0).length;
   view.innerHTML = `
-    <div class="page-head"><h1>더보기</h1></div>
+    <div class="page-title">더보기</div>
     <div class="card">
       <div class="list-item" data-go="goals"><span class="ic">🎯</span>
         <div class="grow"><div>목표 설정</div><div class="sub">월 지출 목표 · 연간 저축 목표</div></div><span class="chev">›</span></div>
@@ -385,11 +437,11 @@ function closeSheet() {
 backdrop.onclick = closeSheet;
 
 /* ---------- 거래 입력/편집 ---------- */
-function openEditor(id) {
+function openEditor(id, preset) {
   const editing = id ? DB.tx.find((t) => t.id === id) : null;
   const draft = editing
     ? { ...editing }
-    : { type: 'expense', amount: '', category: '', date: todayStr(), memo: '' };
+    : { type: 'expense', amount: '', category: '', date: (preset && preset.date) || todayStr(), memo: '' };
 
   function paint() {
     const cats = DB.categories[draft.type] || [];
