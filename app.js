@@ -10,7 +10,13 @@ const DEFAULTS = {
   tx: [],            // {id, type:'expense'|'income', amount, category, date:'YYYY-MM-DD', memo}
   recurring: [],     // {id, type, amount, category, memo, day, from:'YYYY-MM', last:'YYYY-MM'}
   budgets: {},       // { category: 월예산금액 }  (매월 반복 적용)
-  goals: { monthlySpend: 0, annualSaving: 0 },
+  assets: [],        // {id, name, type, value(평가금액), principal(원금·선택), memo}
+  allocation: [      // 월급 배분 목표 (role: 'save' 저축·투자 / 'spend' 소비)
+    { name: '저축', pct: 30, emoji: '🐷', role: 'save' },
+    { name: '투자', pct: 20, emoji: '📈', role: 'save' },
+    { name: '생활비', pct: 50, emoji: '🛒', role: 'spend' }
+  ],
+  goals: { monthlySpend: 0, annualSaving: 0, assetGoal: 100000000 },
   categories: {
     expense: [
       { name: '식비', emoji: '🍚' }, { name: '카페/간식', emoji: '☕' },
@@ -35,7 +41,17 @@ function load() {
   DB.goals = { ...DEFAULTS.goals, ...(DB.goals || {}) };
   DB.settings = { ...DEFAULTS.settings, ...(DB.settings || {}) };
   DB.categories = DB.categories || structuredClone(DEFAULTS.categories);
+  DB.assets = DB.assets || [];
+  DB.allocation = (DB.allocation && DB.allocation.length) ? DB.allocation : structuredClone(DEFAULTS.allocation);
 }
+
+// 자산 종류
+const ASSET_TYPES = [
+  { t: '적금', e: '🏦' }, { t: '예금', e: '💵' }, { t: '주식', e: '📈' },
+  { t: '펀드/ETF', e: '📊' }, { t: '코인', e: '🪙' }, { t: '연금', e: '👵' },
+  { t: '현금', e: '💰' }, { t: '기타', e: '📦' }
+];
+const assetEmoji = (type) => (ASSET_TYPES.find((x) => x.t === type) || { e: '📦' }).e;
 function save() { localStorage.setItem(KEY, JSON.stringify(DB)); }
 
 /* ---------- 테마 ---------- */
@@ -120,6 +136,7 @@ const view = document.getElementById('view');
 function render() {
   if (curTab === 'home') renderHome();
   else if (curTab === 'list') renderList();
+  else if (curTab === 'save') renderSave();
   else if (curTab === 'stats') renderStats();
   else if (curTab === 'more') renderMore();
   document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === curTab));
@@ -389,6 +406,163 @@ function arc(cx, cy, r, from, to, color) {
   const x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
   const large = (to - from) > 0.5 ? 1 : 0;
   return `<path d="M ${x0} ${y0} A ${r} ${r} 0 ${large} 1 ${x1} ${y1}" fill="none" stroke="${color}" stroke-width="30"/>`;
+}
+
+/* ================================================================
+   모으기 = 자산 관리 + 월급 배분
+   ================================================================ */
+function renderSave() {
+  const assets = DB.assets;
+  const total = assets.reduce((s, a) => s + (a.value || 0), 0);
+  // 손익은 '원금을 입력한 투자 자산'만 대상 (적금·예금 제외)
+  const invested = assets.filter((a) => a.principal > 0);
+  const principal = invested.reduce((s, a) => s + a.principal, 0);
+  const investValue = invested.reduce((s, a) => s + a.value, 0);
+  const profitTotal = investValue - principal;
+  const goal = DB.goals.assetGoal || 100000000;
+  const pct = Math.min(100, total / goal * 100);
+
+  const nowYM = ym(todayStr());
+  const monthList = txOfMonth(nowYM);
+  const income = sum(monthList, 'income');
+  const expense = sum(monthList, 'expense');
+  const saved = income - expense;
+
+  let allocHTML;
+  if (income > 0) {
+    allocHTML = DB.allocation.map((b) => {
+      const target = Math.round(income * b.pct / 100);
+      let extra = '';
+      if (b.role === 'spend' && target > 0) {
+        const over = expense - target;
+        extra = `<div class="track ${expense > target ? 'over' : ''}" style="margin-top:7px"><span style="width:${Math.min(100, expense / target * 100)}%"></span></div>
+          <div class="hint" style="margin-top:5px">실제 지출 <span class="num">${won(expense)}</span> · ${over > 0 ? `<span style="color:var(--expense)">${won(over)} 초과</span>` : `${won(-over)} 남음`}</div>`;
+      }
+      return `<div style="margin-bottom:15px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline">
+          <span style="font-weight:700">${b.emoji} ${esc(b.name)} <span class="muted tiny">${b.pct}%</span></span>
+          <span class="num" style="font-weight:800">${won(target)}</span>
+        </div>${extra}</div>`;
+    }).join('');
+  } else {
+    allocHTML = `<div class="hint">이번 달 수입(월급)을 기록하면 배분 목표가 자동으로 계산돼요.</div>`;
+  }
+
+  const assetCards = assets.length ? assets.map(assetRowHTML).join('') :
+    `<div class="card"><div class="empty" style="padding:26px"><div class="big">🐷</div>아직 등록한 자산이 없어요.<br>적금·주식·예금을 추가해보세요.</div></div>`;
+
+  view.innerHTML = `
+    <div class="page-title">모으기</div>
+    <div class="hero">
+      <div class="label">총자산</div>
+      <div class="big num">${won(total)}</div>
+      ${principal > 0 ? `<div class="sub">투자원금 <span class="num">${won(principal)}</span> · 평가손익 <span class="num" style="color:${profitTotal >= 0 ? 'var(--income)' : 'var(--expense)'}">${(profitTotal >= 0 ? '+' : '') + won(profitTotal)}</span></div>` : ''}
+      <div class="slim">
+        <div class="top"><span>🎯 목표 ${won(goal)}</span><span class="r num">${pct < 10 ? pct.toFixed(1) : Math.round(pct)}%</span></div>
+        <div class="track inc"><span style="width:${pct}%"></span></div>
+        <div class="hint">${total >= goal ? '목표 달성! 🎉' : `목표까지 ${won(goal - total)}`} · <a data-editgoal>목표 수정</a></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>💰 월급 배분 <span class="muted tiny" style="font-weight:600">이번 달 수입 ${won(income)}</span></h2>
+      ${allocHTML}
+      ${income > 0 ? `<div class="hint" style="margin-top:2px">이번 달 실제로 남긴 돈: <b class="num" style="color:var(--income)">${(saved >= 0 ? '+' : '') + won(saved)}</b></div>` : ''}
+      <button class="btn ghost" data-alloc style="margin-top:14px">배분 목표 설정</button>
+    </div>
+
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:6px 4px 10px">
+      <h2 style="margin:0;font-size:16px">내 자산 ${assets.length ? `<span class="muted tiny">${assets.length}개</span>` : ''}</h2>
+      <button data-addasset style="color:var(--accent);font-weight:700;font-size:15px">+ 추가</button>
+    </div>
+    ${assetCards}
+  `;
+  view.querySelector('[data-alloc]').onclick = openAllocation;
+  view.querySelector('[data-addasset]').onclick = () => openAsset(null);
+  const eg = view.querySelector('[data-editgoal]'); if (eg) eg.onclick = openAssetGoal;
+  view.querySelectorAll('[data-asset]').forEach((el) => el.onclick = () => openAsset(el.dataset.asset));
+}
+
+function assetRowHTML(a) {
+  const profit = a.principal ? a.value - a.principal : null;
+  const rate = a.principal ? (a.value - a.principal) / a.principal * 100 : null;
+  return `<div class="card" style="padding:14px 16px;margin-bottom:10px" data-asset="${a.id}">
+    <div class="tx" style="padding:0">
+      <div class="emoji">${assetEmoji(a.type)}</div>
+      <div class="mid"><div class="cat">${esc(a.name)}</div><div class="memo">${esc(a.type)}${a.memo ? ' · ' + esc(a.memo) : ''}</div></div>
+      <div style="text-align:right">
+        <div class="amt expense num">${won(a.value)}</div>
+        ${profit !== null ? `<div class="tiny num" style="font-weight:700;margin-top:2px;color:${profit >= 0 ? 'var(--income)' : 'var(--expense)'}">${profit >= 0 ? '+' : ''}${won(profit)} · ${rate >= 0 ? '+' : ''}${rate.toFixed(1)}%</div>` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+function openAsset(id) {
+  const editing = id ? DB.assets.find((a) => a.id === id) : null;
+  const d = editing ? { ...editing } : { type: '적금', name: '', value: '', principal: '', memo: '' };
+  openSheet(`
+    <h3>${editing ? '자산 수정' : '자산 추가'}</h3>
+    <div class="field"><label>종류</label>
+      <div class="chips" id="atypes">${ASSET_TYPES.map((x) => `<button class="chip ${x.t === d.type ? 'on' : ''}" data-t="${x.t}">${x.e} ${x.t}</button>`).join('')}</div></div>
+    <div class="field"><label>이름</label><input id="a-name" type="text" placeholder="예: 주택청약, 삼성전자" value="${esc(d.name)}"></div>
+    <div class="field"><label>현재 평가금액</label><input id="a-value" class="amount-input" type="number" inputmode="numeric" placeholder="0" value="${d.value || ''}"></div>
+    <div class="field"><label>투자 원금 <span class="muted tiny">선택 — 넣으면 수익률까지 계산</span></label>
+      <input id="a-principal" type="number" inputmode="numeric" placeholder="비워두면 금액만 표시" value="${d.principal || ''}"></div>
+    <div class="field"><label>메모 (선택)</label><input id="a-memo" type="text" placeholder="" value="${esc(d.memo || '')}"></div>
+    <button class="btn primary" id="a-save">${editing ? '저장' : '추가'}</button>
+    ${editing ? `<button class="btn danger" id="a-del" style="margin-top:8px">삭제</button>` : ''}
+  `);
+  sheetEl.querySelectorAll('#atypes .chip').forEach((b) => b.onclick = () => {
+    sheetEl.querySelectorAll('#atypes .chip').forEach((x) => x.classList.remove('on')); b.classList.add('on'); d.type = b.dataset.t;
+  });
+  sheetEl.querySelector('#a-save').onclick = () => {
+    const name = sheetEl.querySelector('#a-name').value.trim();
+    const value = Math.round(Number(sheetEl.querySelector('#a-value').value) || 0);
+    const principal = Math.round(Number(sheetEl.querySelector('#a-principal').value) || 0);
+    const memo = sheetEl.querySelector('#a-memo').value.trim();
+    if (!name) return toast('이름을 입력해주세요');
+    if (value <= 0) return toast('평가금액을 입력해주세요');
+    const rec = { type: d.type, name, value, principal: principal || 0, memo };
+    if (editing) Object.assign(editing, rec); else DB.assets.push({ id: uid(), ...rec });
+    save(); closeSheet(); render(); toast(editing ? '저장했어요 ✓' : '추가했어요 ✓');
+  };
+  if (editing) sheetEl.querySelector('#a-del').onclick = () => {
+    if (confirm('이 자산을 삭제할까요?')) { DB.assets = DB.assets.filter((a) => a.id !== id); save(); closeSheet(); render(); toast('삭제했어요'); }
+  };
+}
+
+function openAssetGoal() {
+  openSheet(`<h3>🎯 자산 목표</h3>
+    <div class="field"><label>목표 총자산</label>
+      <input id="ag" type="number" inputmode="numeric" placeholder="100000000" value="${DB.goals.assetGoal || ''}">
+      <div class="hint">「억을모으자」의 목표 금액이에요. 기본은 1억(100,000,000)이에요.</div></div>
+    <button class="btn primary" id="ag-save">저장</button>`);
+  sheetEl.querySelector('#ag-save').onclick = () => {
+    DB.goals.assetGoal = Math.max(0, Math.round(Number(sheetEl.querySelector('#ag').value) || 0)) || 100000000;
+    save(); closeSheet(); render(); toast('목표를 저장했어요');
+  };
+}
+
+function openAllocation() {
+  openSheet(`<h3>💰 월급 배분 목표</h3>
+    <div class="hint" style="margin-bottom:16px">월급을 어떤 비율로 나눌지 정해요. 합계가 100%가 되게 맞춰주세요.</div>
+    ${DB.allocation.map((b, i) => `<div class="field" style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+      <label style="margin:0;flex:1">${b.emoji} ${esc(b.name)}${b.role === 'spend' ? ' <span class="muted tiny">소비</span>' : ''}</label>
+      <div style="display:flex;align-items:center;gap:6px;width:110px">
+        <input class="alloc" data-i="${i}" type="number" inputmode="numeric" value="${b.pct}" style="text-align:right"><span class="muted">%</span></div>
+    </div>`).join('')}
+    <div class="hint" id="alloc-sum" style="text-align:right"></div>
+    <button class="btn primary" id="al-save" style="margin-top:12px">저장</button>`);
+  const upd = () => {
+    const s = [...sheetEl.querySelectorAll('.alloc')].reduce((t, i) => t + (Number(i.value) || 0), 0);
+    sheetEl.querySelector('#alloc-sum').innerHTML = `합계 <b style="color:${s === 100 ? 'var(--income)' : 'var(--expense)'}">${s}%</b>${s === 100 ? ' ✓' : ' — 100%로 맞춰주세요'}`;
+  };
+  sheetEl.querySelectorAll('.alloc').forEach((i) => i.oninput = upd); upd();
+  sheetEl.querySelector('#al-save').onclick = () => {
+    sheetEl.querySelectorAll('.alloc').forEach((i) => { DB.allocation[Number(i.dataset.i)].pct = Math.max(0, Math.round(Number(i.value) || 0)); });
+    save(); closeSheet(); render(); toast('배분 목표를 저장했어요');
+  };
 }
 
 /* ---------- 더보기 ---------- */

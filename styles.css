@@ -95,6 +95,7 @@ input, select, textarea { font-family: inherit; font-size: 16px; color: var(--te
 .card { background: var(--card); border-radius: var(--r-lg); box-shadow: var(--shadow); padding: 20px; margin-bottom: 14px; }
 .card h2 { font-size: 15px; font-weight: 700; margin: 0 0 16px; }
 .muted { color: var(--text-dim); }
+.tiny { font-size: 12px; }
 
 /* ── 캘린더 ── */
 .cal { padding: 8px 8px 12px; }
