@@ -199,6 +199,10 @@ function renderHome() {
   }
 
   view.innerHTML = `
+    <div class="brand">
+      <img class="logo" src="icons/icon-192.png" alt="">
+      <div class="bt"><b>억을모으자</b><span>티끌 모아 억! 오늘도 차곡차곡 💪</span></div>
+    </div>
     ${monthBarHTML()}
     <div class="hero">
       <div class="label">이번 달 지출</div>

@@ -53,6 +53,19 @@ input, select, textarea { font-family: inherit; font-size: 16px; color: var(--te
 #app { min-height: 100%; }
 #view { padding: calc(var(--safe-top) + 6px) 18px 108px; max-width: 540px; margin: 0 auto; }
 
+/* ── 브랜드 배너 ── */
+.brand {
+  display: flex; align-items: center; gap: 12px;
+  background: linear-gradient(135deg, #4a95ff, #1b64da);
+  color: #fff; border-radius: 18px; padding: 13px 16px; margin: 4px 0 12px;
+  box-shadow: 0 8px 22px rgba(49,130,246,.3);
+}
+.brand .logo { width: 40px; height: 40px; border-radius: 11px; flex-shrink: 0; box-shadow: 0 2px 6px rgba(0,0,0,.18); }
+.brand .bt { flex: 1; min-width: 0; }
+.brand .bt b { display: block; font-size: 18px; font-weight: 800; letter-spacing: -0.02em; }
+.brand .bt span { font-size: 12px; opacity: .88; font-weight: 600; }
+.brand .coin { font-size: 22px; opacity: .9; }
+
 /* ── 상단 월 선택 바 ── */
 .appbar { display: flex; align-items: center; justify-content: center; position: relative; height: 52px; margin-bottom: 6px; }
 .appbar .mtitle { display: inline-flex; align-items: center; gap: 12px; }

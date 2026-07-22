@@ -1,6 +1,6 @@
 // 서비스 워커 — 오프라인 캐시. 데이터는 캐시하지 않고(앱은 localStorage 사용),
 // 앱 셸(HTML/CSS/JS/아이콘)만 캐시해 인터넷 없이도 앱이 열리게 한다.
-const CACHE = 'moneybook-v4';
+const CACHE = 'moneybook-v5';
 const ASSETS = [
   './',
   './index.html',
