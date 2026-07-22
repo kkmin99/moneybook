@@ -30,7 +30,7 @@ const DEFAULTS = {
       { name: '부수입', emoji: '📈' }, { name: '기타수입', emoji: '✨' }
     ]
   },
-  settings: { apiKey: '', model: 'claude-opus-4-8', theme: 'system' }
+  settings: { theme: 'system' }
 };
 
 let DB;
@@ -173,13 +173,6 @@ function bindMonthNav() {
   if (a) a.onclick = () => openEditor(null);
 }
 
-// 캘린더용 초압축 금액 표기 (3.2만 / 12만 / 8천 / 500)
-function calAmt(n) {
-  if (n >= 100000000) return (n / 100000000).toFixed(1).replace(/\.0$/, '') + '억';
-  if (n >= 10000) { const v = n / 10000; return (v >= 10 ? Math.round(v) : v.toFixed(1).replace(/\.0$/, '')) + '만'; }
-  if (n >= 1000) return Math.round(n / 1000) + '천';
-  return String(n);
-}
 
 // 목표 진행 바(얇은 버전)
 function goalSlimHTML(expense) {
@@ -237,7 +230,7 @@ function renderHome() {
     <div class="hero">
       <div class="label">이번 달 지출</div>
       <div class="big num">${won(expense)}</div>
-      <div class="sub">수입 <span class="inc num">${won(income)}</span> · 잔액 <span class="bal num">${(balance >= 0 ? '+' : '') + won(balance)}</span></div>
+      <div class="sub">수입 <span class="inc num">${won(income)}</span> · 잔액 <span class="bal num" style="color:${balance < 0 ? 'var(--expense)' : 'var(--text-2)'}">${(balance >= 0 ? '+' : '') + won(balance)}</span></div>
       ${goalSlimHTML(expense)}
     </div>
     <div class="card cal">
@@ -253,7 +246,7 @@ function renderHome() {
 function dayCellHTML(ds, dnum, dim, byDay, maxE, todayS) {
   const wd = new Date(ds + 'T00:00').getDay();
   const dd = byDay[ds] || { e: 0, i: 0 };
-  const heat = dim ? 0 : Math.min(0.16, dd.e / maxE * 0.16);
+  const heat = dim ? 0 : Math.min(0.12, dd.e / maxE * 0.12);
   const cls = ['day'];
   if (dim) cls.push('dim');
   if (wd === 0) cls.push('sun'); else if (wd === 6) cls.push('sat');
