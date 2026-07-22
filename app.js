@@ -35,8 +35,13 @@ const DEFAULTS = {
 
 let DB;
 function load() {
-  try { DB = { ...structuredClone(DEFAULTS), ...JSON.parse(localStorage.getItem(KEY) || '{}') }; }
-  catch { DB = structuredClone(DEFAULTS); }
+  // 1순위 본 저장소, 손상/없으면 2순위 자동백업본을 시도 (절대 스스로 데이터를 날리지 않음)
+  let parsed = null;
+  try { const raw = localStorage.getItem(KEY); if (raw) parsed = JSON.parse(raw); } catch { parsed = null; }
+  if (!parsed || !Array.isArray(parsed.tx)) {
+    try { const b = localStorage.getItem(KEY + '.bak'); if (b) { const p = JSON.parse(b); if (Array.isArray(p.tx)) parsed = p; } } catch { /* ignore */ }
+  }
+  DB = { ...structuredClone(DEFAULTS), ...(parsed || {}) };
   // 중첩 기본값 보정
   DB.goals = { ...DEFAULTS.goals, ...(DB.goals || {}) };
   DB.settings = { ...DEFAULTS.settings, ...(DB.settings || {}) };
@@ -52,7 +57,11 @@ const ASSET_TYPES = [
   { t: '현금', e: '💰' }, { t: '기타', e: '📦' }
 ];
 const assetEmoji = (type) => (ASSET_TYPES.find((x) => x.t === type) || { e: '📦' }).e;
-function save() { localStorage.setItem(KEY, JSON.stringify(DB)); }
+function save() {
+  const s = JSON.stringify(DB);
+  localStorage.setItem(KEY, s);
+  try { localStorage.setItem(KEY + '.bak', s); } catch { /* 용량 초과 등 무시 */ }
+}
 
 /* ---------- 테마 ---------- */
 function applyTheme() {

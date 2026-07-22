@@ -97,6 +97,15 @@ input, select, textarea { font-family: inherit; font-size: 16px; color: var(--te
 .muted { color: var(--text-dim); }
 .tiny { font-size: 12px; }
 
+/* 말랑한 손글씨 — 제목/라벨/탭이름만 (숫자·본문은 깔끔한 폰트 유지) */
+.page-title, .sheet h3, .empty, .hero .label, .tab span, .day-head .d {
+  font-family: 'Gaegu', 'Nanum Pen Script', cursive;
+}
+.page-title { font-size: 28px; }
+.sheet h3 { font-size: 24px; }
+.hero .label { font-size: 15.5px; }
+.tab span { font-size: 12px; font-weight: 700; }
+
 /* ── 캘린더 ── */
 .cal { padding: 8px 8px 12px; }
 .cal-week { display: grid; grid-template-columns: repeat(7, 1fr); margin-bottom: 4px; }
