@@ -152,10 +152,11 @@ function render() {
   window.scrollTo(0, 0);
 }
 
-// 상단 월 선택 바 (‹ 2026년 7월 › + 오늘 버튼)
-function monthBarHTML() {
+// 상단 월 선택 바 (+ 추가 · ‹ 2026년 7월 › · 오늘)
+function monthBarHTML(showAdd) {
   const isCur = curMonth === ym(todayStr());
   return `<div class="appbar">
+    ${showAdd ? `<button class="add-btn" data-add>+ 추가</button>` : ''}
     <div class="mtitle">
       <button data-mn="-1">‹</button>
       <b class="num">${monthLabel(curMonth)}</b>
@@ -168,6 +169,8 @@ function bindMonthNav() {
   view.querySelectorAll('[data-mn]').forEach((b) => b.onclick = () => { curMonth = shiftMonth(curMonth, +b.dataset.mn); render(); });
   const t = view.querySelector('[data-today]');
   if (t) t.onclick = () => { curMonth = ym(todayStr()); render(); };
+  const a = view.querySelector('[data-add]');
+  if (a) a.onclick = () => openEditor(null);
 }
 
 // 캘린더용 초압축 금액 표기 (3.2만 / 12만 / 8천 / 500)
@@ -230,7 +233,7 @@ function renderHome() {
       <img class="logo" src="icons/coin.png" alt="">
       <span class="wm"><span class="hi">억</span>을모으자</span>
     </div>
-    ${monthBarHTML()}
+    ${monthBarHTML(true)}
     <div class="hero">
       <div class="label">이번 달 지출</div>
       <div class="big num">${won(expense)}</div>
@@ -241,13 +244,10 @@ function renderHome() {
       <div class="cal-week"><span class="sun">일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span class="sat">토</span></div>
       <div class="cal-grid">${cells}</div>
     </div>
-    <button class="btn soft" id="ai-btn">🤖 이번 달 AI 소비 피드백</button>
-    <div id="ai-out"></div>
   `;
 
   bindMonthNav();
   view.querySelectorAll('.day[data-date]').forEach((el) => el.onclick = () => openDay(el.dataset.date));
-  document.getElementById('ai-btn').onclick = runAIFeedback;
 }
 
 function dayCellHTML(ds, dnum, dim, byDay, maxE, todayS) {
@@ -320,7 +320,7 @@ function renderList() {
 
   view.innerHTML = `
     <div class="page-title">내역</div>
-    ${monthBarHTML()}
+    ${monthBarHTML(true)}
     <div class="pills">
       <div class="pill"><div class="k">수입</div><div class="v inc num">${won(income)}</div></div>
       <div class="pill"><div class="k">지출</div><div class="v exp num">${won(expense)}</div></div>
@@ -643,8 +643,6 @@ function renderMore() {
     <div class="card">
       <div class="list-item" data-go="theme"><span class="ic">🌗</span>
         <div class="grow"><div>화면 테마</div><div class="sub">${{ system: '시스템 자동', light: '밝게', dark: '어둡게' }[DB.settings.theme || 'system']}</div></div><span class="chev">›</span></div>
-      <div class="list-item" data-go="ai"><span class="ic">🤖</span>
-        <div class="grow"><div>AI 피드백 설정</div><div class="sub">${DB.settings.apiKey ? '연결됨 · ' + DB.settings.model : 'API 키 미설정'}</div></div><span class="chev">›</span></div>
     </div>
     <div class="card">
       <div class="list-item" data-go="export"><span class="ic">📤</span><div class="grow"><div>데이터 백업 (내보내기)</div></div><span class="chev">›</span></div>
@@ -664,7 +662,6 @@ function moreAction(what) {
   else if (what === 'budgets') openBudgets();
   else if (what === 'recurring') openRecurringList();
   else if (what === 'categories') openCategories();
-  else if (what === 'ai') openAISettings();
   else if (what === 'export') exportData();
   else if (what === 'import') importData();
   else if (what === 'reset') resetData();
@@ -928,95 +925,6 @@ function openCategories() {
 }
 
 /* ================================================================
-   AI 피드백 (Claude API 직접 호출 — 브라우저)
-   ================================================================ */
-function openAISettings() {
-  openSheet(`
-    <h3>🤖 AI 피드백 설정</h3>
-    <div class="hint" style="margin-bottom:14px;line-height:1.6">
-      Claude API 키를 넣으면 이번 달 소비를 분석해 조언해줘요.
-      키는 <b>이 기기에만</b> 저장되고, 분석할 때만 Anthropic 서버로 요약이 전송됩니다.
-      키는 <a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com</a>에서 발급해요.
-    </div>
-    <div class="field"><label>API 키 (sk-ant-...)</label>
-      <input id="ai-key" type="password" placeholder="sk-ant-..." value="${esc(DB.settings.apiKey || '')}"></div>
-    <div class="field"><label>모델</label>
-      <select id="ai-model">
-        <option value="claude-opus-4-8" ${DB.settings.model === 'claude-opus-4-8' ? 'selected' : ''}>Claude Opus 4.8 (가장 똑똑함)</option>
-        <option value="claude-haiku-4-5" ${DB.settings.model === 'claude-haiku-4-5' ? 'selected' : ''}>Claude Haiku 4.5 (가장 저렴/빠름)</option>
-      </select>
-      <div class="hint">가볍게 쓰려면 Haiku, 더 깊은 분석을 원하면 Opus를 고르세요.</div>
-    </div>
-    <button class="btn primary" id="ai-save">저장</button>
-  `);
-  sheetEl.querySelector('#ai-save').onclick = () => {
-    DB.settings.apiKey = sheetEl.querySelector('#ai-key').value.trim();
-    DB.settings.model = sheetEl.querySelector('#ai-model').value;
-    save(); closeSheet(); render(); toast('저장했어요');
-  };
-}
-
-async function runAIFeedback() {
-  const out = document.getElementById('ai-out');
-  const btn = document.getElementById('ai-btn');
-  if (!DB.settings.apiKey) {
-    openAISettings();
-    return;
-  }
-  const list = txOfMonth(curMonth);
-  if (!list.length) { out.innerHTML = `<div class="hint" style="margin-top:12px">이 달의 기록이 없어 분석할 게 없어요.</div>`; return; }
-
-  const income = sum(list, 'income'), expense = sum(list, 'expense');
-  const totals = catTotals(curMonth, 'expense');
-  const target = DB.goals.monthlySpend, saveGoal = DB.goals.annualSaving;
-  const saved = yearNet(curMonth.slice(0, 4));
-
-  // 개인정보 최소화: 원시 메모가 아닌 '요약'만 전송
-  const summary = [
-    `기간: ${monthLabel(curMonth)}`,
-    `총수입: ${income}원, 총지출: ${expense}원, 잔액: ${income - expense}원`,
-    target ? `이번 달 지출 목표: ${target}원` : '지출 목표 미설정',
-    saveGoal ? `연간 저축 목표: ${saveGoal}원, 올해 누적 저축: ${saved}원` : '저축 목표 미설정',
-    '카테고리별 지출:',
-    ...totals.map(([n, v]) => ` - ${n}: ${v}원 (${Math.round(v / expense * 100)}%)`)
-  ].join('\n');
-
-  out.innerHTML = `<div class="hint" style="margin-top:14px">🤖 분석 중이에요...</div>`;
-  btn.disabled = true;
-
-  try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': DB.settings.apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
-      },
-      body: JSON.stringify({
-        model: DB.settings.model,
-        max_tokens: 1024,
-        system: '너는 다정하고 현실적인 한국어 가계부 코치야. 사용자의 이번 달 소비 요약을 보고, 칭찬할 점 1가지, 개선하면 좋을 점 1~2가지, 다음 달을 위한 구체적이고 실천 가능한 팁 2가지를 짧게 알려줘. 존댓말로, 이모지를 적당히 섞어서 따뜻하게. 마크다운 헤더(#)는 쓰지 말고 짧은 문단과 불릿(•)만 사용해.',
-        messages: [{ role: 'user', content: `이번 달 내 소비 요약이야:\n\n${summary}\n\n피드백 부탁해!` }]
-      })
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      const msg = data?.error?.message || `오류 (${res.status})`;
-      out.innerHTML = `<div class="hint" style="margin-top:14px;color:var(--expense)">AI 호출 실패: ${esc(msg)}<br>API 키와 결제 설정을 확인해주세요.</div>`;
-      return;
-    }
-    const text = (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
-    out.innerHTML = `<div class="card" style="margin:14px 0 0;background:var(--accent-weak);box-shadow:none">
-      <div style="white-space:pre-wrap;line-height:1.65">${esc(text)}</div></div>`;
-  } catch (e) {
-    out.innerHTML = `<div class="hint" style="margin-top:14px;color:var(--expense)">네트워크 오류예요. 인터넷 연결을 확인해주세요.</div>`;
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-/* ================================================================
    데이터 백업/복원/삭제
    ================================================================ */
 function exportData() {
@@ -1065,7 +973,6 @@ function toast(msg) {
 }
 
 /* ---------- 부팅 ---------- */
-document.getElementById('fab').onclick = () => openEditor(null);
 document.querySelectorAll('.tab').forEach((b) => b.onclick = () => { curTab = b.dataset.tab; render(); });
 
 load();
