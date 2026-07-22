@@ -102,6 +102,7 @@ const PALETTE = ['#16a085', '#2f80ed', '#eb5757', '#f2994a', '#9b51e0', '#2d9cdb
 /* ---------- 앱 상태 ---------- */
 let curMonth = ym(todayStr());     // 현재 보고 있는 달
 let curTab = 'home';
+let listQuery = '';   // 내역 검색어
 
 /* ---------- 반복 거래 자동 생성 ---------- */
 function runRecurring() {
@@ -251,11 +252,9 @@ function dayCellHTML(ds, dnum, dim, byDay, maxE, todayS) {
   if (dim) cls.push('dim');
   if (wd === 0) cls.push('sun'); else if (wd === 6) cls.push('sat');
   if (ds === todayS) cls.push('today');
-  let amt = '';
-  if (dd.e || dd.i) {
-    amt = `<div class="damt">${dd.e ? `<span class="e num">${comma(dd.e)}</span>` : ''}${dd.i ? `<span class="i num">+${comma(dd.i)}</span>` : ''}</div>`;
-  }
-  return `<button class="${cls.join(' ')}" data-date="${ds}" style="--heat:${heat}"><span class="dnum num">${dnum}</span>${amt}</button>`;
+  const amt = dd.e ? `<div class="damt"><span class="e num">${comma(dd.e)}</span></div>` : '';
+  const idot = dd.i ? '<span class="idot"></span>' : '';   // 수입은 초록 점으로만
+  return `<button class="${cls.join(' ')}" data-date="${ds}" style="--heat:${heat}"><span class="dnum num">${dnum}</span>${amt}${idot}</button>`;
 }
 
 /* ---------- 하루 상세 시트 ---------- */
@@ -293,12 +292,16 @@ function txRowHTML(t) {
 
 /* ---------- 내역 ---------- */
 function renderList() {
-  const list = [...txOfMonth(curMonth)].sort((a, b) => (a.date < b.date ? 1 : (a.date > b.date ? -1 : 0)));
-  const income = sum(list, 'income'), expense = sum(list, 'expense');
+  const all = [...txOfMonth(curMonth)].sort((a, b) => (a.date < b.date ? 1 : (a.date > b.date ? -1 : 0)));
+  const income = sum(all, 'income'), expense = sum(all, 'expense');
+  const q = listQuery.trim().toLowerCase();
+  const list = q ? all.filter((t) => (t.category + ' ' + (t.memo || '')).toLowerCase().includes(q)) : all;
 
   let body = '';
-  if (!list.length) {
+  if (!all.length) {
     body = `<div class="card"><div class="empty"><div class="big">🗒️</div>이 달의 기록이 없어요.</div></div>`;
+  } else if (!list.length) {
+    body = `<div class="card"><div class="empty"><div class="big">🔍</div>‘${esc(listQuery)}’ 검색 결과가 없어요.</div></div>`;
   } else {
     const groups = {};
     for (const t of list) (groups[t.date] ||= []).push(t);
@@ -319,9 +322,17 @@ function renderList() {
       <div class="pill"><div class="k">지출</div><div class="v exp num">${won(expense)}</div></div>
       <div class="pill"><div class="k">잔액</div><div class="v exp num">${(income - expense >= 0 ? '+' : '') + won(income - expense)}</div></div>
     </div>
+    ${all.length ? `<div class="searchbar"><input id="list-search" type="text" placeholder="메모·카테고리 검색" value="${esc(listQuery)}" enterkeyhint="search">${listQuery ? '<button id="search-clear" aria-label="지우기">✕</button>' : ''}</div>` : ''}
     ${body}
   `;
   bindMonthNav();
+  const si = view.querySelector('#list-search');
+  if (si) {
+    si.oninput = () => { listQuery = si.value; renderList(); };
+    if (listQuery) { si.focus(); si.setSelectionRange(si.value.length, si.value.length); }
+  }
+  const sc = view.querySelector('#search-clear');
+  if (sc) sc.onclick = () => { listQuery = ''; renderList(); };
   view.querySelectorAll('.tx').forEach((el) => el.onclick = () => openEditor(el.dataset.id));
 }
 
@@ -966,7 +977,7 @@ function toast(msg) {
 }
 
 /* ---------- 부팅 ---------- */
-document.querySelectorAll('.tab').forEach((b) => b.onclick = () => { curTab = b.dataset.tab; render(); });
+document.querySelectorAll('.tab').forEach((b) => b.onclick = () => { curTab = b.dataset.tab; listQuery = ''; render(); });
 
 load();
 applyTheme();

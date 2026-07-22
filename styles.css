@@ -1,3 +1,11 @@
+/* 손글씨 폰트 내장 (오프라인 지원) */
+@font-face {
+  font-family: 'Gaegu';
+  src: url('fonts/Gaegu-Bold.woff2') format('woff2');
+  font-weight: 400 700;
+  font-display: swap;
+}
+
 :root {
   --bg: #f2f4f6;
   --card: #ffffff;
@@ -100,13 +108,12 @@ input, select, textarea { font-family: inherit; font-size: 16px; color: var(--te
 .tiny { font-size: 12px; }
 
 /* 말랑한 손글씨 — 제목/라벨/탭이름만 (숫자·본문은 깔끔한 폰트 유지) */
-.page-title, .sheet h3, .empty, .hero .label, .tab span, .day-head .d {
+.page-title, .sheet h3, .empty, .hero .label, .day-head .d {
   font-family: 'Gaegu', 'Nanum Pen Script', cursive;
 }
 .page-title { font-size: 28px; }
 .sheet h3 { font-size: 24px; }
 .hero .label { font-size: 15.5px; }
-.tab span { font-size: 12px; font-weight: 700; }
 
 /* ── 캘린더 ── */
 .cal { padding: 8px 8px 12px; }
@@ -129,7 +136,7 @@ input, select, textarea { font-family: inherit; font-size: 16px; color: var(--te
 .day.today .dnum { background: var(--accent); color: #fff; font-weight: 800; }
 .day .damt { margin-top: 3px; display: flex; flex-direction: column; align-items: center; gap: 1px; line-height: 1.1; width: 100%; }
 .day .damt .e { font-size: 9px; font-weight: 800; color: var(--expense); letter-spacing: -0.04em; white-space: nowrap; }
-.day .damt .i { font-size: 8.5px; font-weight: 800; color: var(--income); letter-spacing: -0.04em; white-space: nowrap; }
+.day .idot { position: absolute; top: 7px; right: 7px; width: 6px; height: 6px; border-radius: 50%; background: var(--income); }
 
 /* ── 미니 인사이트 pill ── */
 .pills { display: flex; gap: 10px; margin-bottom: 14px; }
@@ -138,6 +145,12 @@ input, select, textarea { font-family: inherit; font-size: 16px; color: var(--te
 .pill .v { font-size: 14.5px; font-weight: 800; letter-spacing: -0.03em; margin-top: 3px; white-space: nowrap; }
 .pill .v.exp { color: var(--text); }
 .pill .v.inc { color: var(--income); }
+
+/* ── 검색바 ── */
+.searchbar { position: relative; margin: 2px 0 14px; }
+.searchbar input { width: 100%; padding: 12px 40px; border: none; border-radius: 14px; background: var(--card); box-shadow: var(--shadow); outline: none; font-size: 15px; color: var(--text); }
+.searchbar::before { content: '🔍'; position: absolute; left: 15px; top: 50%; transform: translateY(-50%); font-size: 14px; opacity: .55; pointer-events: none; }
+.searchbar #search-clear { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); width: 24px; height: 24px; border-radius: 50%; background: var(--card-2); color: var(--text-dim); font-size: 12px; display: grid; place-items: center; }
 
 /* ── 거래 행 ── */
 .tx { display: flex; align-items: center; gap: 13px; padding: 13px 6px; }
